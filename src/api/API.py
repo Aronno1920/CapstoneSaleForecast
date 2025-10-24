@@ -3,12 +3,12 @@ FastAPI REST API for Sales Forecast System with organized routers
 """
 
 import logging
-
+from typing import Any, Dict
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from ..utils.config import AppConfig
 from ..database.connection import create_session_factory
-from .routers import root_api, training_api, forecast_api, eda_api
+from .routers import training_api, forecast_api, eda_sales_api, eda_product_api, eda_market_api
 
 
 # Configure logging (basic)
@@ -42,9 +42,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Root API Documentation
+@app.get("/")
+async def root() -> Dict[str, Any]:
+    """Root endpoint with API information"""
+    return {
+        "name": "Sales Forecast API",
+        "version": "1.0.0",
+        "description": "Sales forecasting over Region/Area/Territory",
+        "routers": ["/health", "/status", "/train", "/forecast"],
+        "docs": "/docs",
+        "timestamp": time.time(),
+    }
+
 
 # Include routers
-app.include_router(root_api.router)
-app.include_router(eda_api.router)
+app.include_router(eda_product_api.router)
+app.include_router(eda_market_api.router)
+app.include_router(eda_sales_api.router)
 app.include_router(training_api.router)
 app.include_router(forecast_api.router)

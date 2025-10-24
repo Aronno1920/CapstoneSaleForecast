@@ -13,15 +13,41 @@ class TrainRequest(BaseModel):
     horizon: int = 6
 
 
-@router.post("/train")
-async def train(req: TrainRequest, request: Request):
+class ProphetTrainRequest(BaseModel):
+    scope: str = "territory"  # territory|area|region
+    seasonality_mode: str = "additive"  # additive|multiplicative
+
+
+####################################################
+@router.post("/train-lightgbm")
+async def train_lightgbm(req: TrainRequest, request: Request):
     config = request.app.state.config
     SessionFactory = request.app.state.SessionFactory
 
     def _run():
-        from src.services.training_service import train_pipeline
+        from src.services.training_service import train_lightgbm_pipeline
         with SessionFactory() as session:
-            return train_pipeline(session=session, config=config, scope=req.scope, horizon=req.horizon)
+            return train_lightgbm_pipeline(session=session, config=config, scope=req.scope, horizon=req.horizon)
 
     result = await asyncio.to_thread(_run)
     return result
+
+
+@router.post("/train-prophet")
+async def train_prophet(req: ProphetTrainRequest, request: Request):
+    config = request.app.state.config
+    SessionFactory = request.app.state.SessionFactory
+
+    def _run():
+        from src.services.training_service import train_prophet_pipeline
+        with SessionFactory() as session:
+            return train_prophet_pipeline(
+                session=session,
+                config=config,
+                scope=req.scope,
+                seasonality_mode=req.seasonality_mode,
+            )
+
+    result = await asyncio.to_thread(_run)
+    return result
+####################################################

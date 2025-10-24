@@ -1,0 +1,681 @@
+import asyncio
+from typing import Any, Dict, List, Optional
+
+import numpy as np
+import pandas as pd
+from fastapi import APIRouter, Query, Request
+from sqlalchemy import text
+
+router = APIRouter(
+    tags=["eda-sales-advanced"],
+    responses={404: {"description": "Not found"}},
+)
+
+
+def _rows_to_dicts(rows) -> List[Dict[str, Any]]:
+    return [dict(row._mapping) for row in rows]
+
+
+#####################################################
+@router.get("/eda-sales/summary")
+async def eda_summary(request: Request):
+    SessionFactory = request.app.state.SessionFactory
+
+    def _run():
+        sql = text(
+            """
+            SELECT
+              COUNT(*) AS row_count,
+              MIN([YEAR]) AS min_year,
+              MAX([YEAR]) AS max_year,
+              COUNT(DISTINCT [PRODUCT_ID]) AS product_count,
+              COUNT(DISTINCT [REGION_ID]) AS region_count,
+              COUNT(DISTINCT [AREA_ID]) AS area_count,
+              COUNT(DISTINCT [TERRITORY_ID]) AS territory_count
+            FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
+            """
+        )
+        with SessionFactory() as session:
+            rows = session.execute(sql).all()
+            return _rows_to_dicts(rows)[0] if rows else {}
+
+    return await asyncio.to_thread(_run)
+
+
+@router.get("/eda-sales/region-summary")
+async def eda_region_summary(request: Request, year: Optional[int] = Query(None),month: Optional[int] = Query(None),
+):
+    SessionFactory = request.app.state.SessionFactory
+
+    def _run():
+        conditions = []
+        params: Dict[str, Any] = {}
+        if year is not None:
+            conditions.append("[YEAR] = :year")
+            params["year"] = year
+        if month is not None:
+            conditions.append("[MONTH] = :month")
+            params["month"] = month
+        where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        sql = text(
+            f"""
+            SELECT
+              [REGION_ID], [AREA_ID], [TERRITORY_ID],
+              SUM(CAST([QT_PRS] AS FLOAT)) AS total_qty,
+              SUM(CAST([QT_PRS] AS FLOAT) * CAST([UNIT_PRICE] AS FLOAT)) AS sales_amount
+            FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
+            {where_clause}
+            GROUP BY [REGION_ID], [AREA_ID], [TERRITORY_ID]
+            ORDER BY [REGION_ID], [AREA_ID], [TERRITORY_ID]
+            """
+        )
+        with SessionFactory() as session:
+            rows = session.execute(sql, params).all()
+            return _rows_to_dicts(rows)
+
+    return await asyncio.to_thread(_run)
+
+
+@router.get("/eda-sales/monthly-trend")
+async def eda_monthly_trend(
+    request: Request,
+    region_id: Optional[str] = Query(None),
+    area_id: Optional[str] = Query(None),
+    territory_id: Optional[str] = Query(None),
+    product_id: Optional[str] = Query(None),
+):
+    SessionFactory = request.app.state.SessionFactory
+
+    def _run():
+        conditions = []
+        params: Dict[str, Any] = {}
+        if region_id:
+            conditions.append("[REGION_ID] = :region_id")
+            params["region_id"] = region_id
+        if area_id:
+            conditions.append("[AREA_ID] = :area_id")
+            params["area_id"] = area_id
+        if territory_id:
+            conditions.append("[TERRITORY_ID] = :territory_id")
+            params["territory_id"] = territory_id
+        if product_id:
+            conditions.append("[PRODUCT_ID] = :product_id")
+            params["product_id"] = product_id
+        where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        sql = text(
+            f"""
+            SELECT
+              CAST([YEAR] AS INT) AS [year],
+              CAST([MONTH] AS INT) AS [month],
+              SUM(CAST([QT_PRS] AS FLOAT)) AS total_qty,
+              SUM(CAST([QT_PRS] AS FLOAT) * CAST([UNIT_PRICE] AS FLOAT)) AS sales_amount
+            FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
+            {where_clause}
+            GROUP BY [YEAR], [MONTH]
+            ORDER BY [YEAR], [MONTH]
+            """
+        )
+        with SessionFactory() as session:
+            rows = session.execute(sql, params).all()
+            return _rows_to_dicts(rows)
+
+    return await asyncio.to_thread(_run)
+
+
+@router.get("/eda-sales/top-products")
+async def eda_top_products(
+    request: Request,
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None),
+    region_id: Optional[str] = Query(None),
+    area_id: Optional[str] = Query(None),
+    territory_id: Optional[str] = Query(None),
+    limit: int = Query(10, ge=1, le=200),
+):
+    SessionFactory = request.app.state.SessionFactory
+
+    def _run():
+        conditions = []
+        params: Dict[str, Any] = {"limit": limit}
+        if year is not None:
+            conditions.append("[YEAR] = :year")
+            params["year"] = year
+        if month is not None:
+            conditions.append("[MONTH] = :month")
+            params["month"] = month
+        if region_id:
+            conditions.append("[REGION_ID] = :region_id")
+            params["region_id"] = region_id
+        if area_id:
+            conditions.append("[AREA_ID] = :area_id")
+            params["area_id"] = area_id
+        if territory_id:
+            conditions.append("[TERRITORY_ID] = :territory_id")
+            params["territory_id"] = territory_id
+        where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        sql = text(
+            f"""
+            SELECT TOP (:limit)
+              [PRODUCT_ID],
+              SUM(CAST([QT_PRS] AS FLOAT)) AS total_qty,
+              SUM(CAST([QT_PRS] AS FLOAT) * CAST([UNIT_PRICE] AS FLOAT)) AS sales_amount
+            FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
+            {where_clause}
+            GROUP BY [PRODUCT_ID]
+            ORDER BY sales_amount DESC
+            """
+        )
+        with SessionFactory() as session:
+            rows = session.execute(sql, params).all()
+            return _rows_to_dicts(rows)
+
+    return await asyncio.to_thread(_run)
+
+
+@router.get("/eda-sales/sample")
+async def eda_sample(request: Request, limit: int = Query(50, ge=1, le=500)):
+    SessionFactory = request.app.state.SessionFactory
+
+    def _run():
+        sql = text(
+            """
+            SELECT TOP (:limit)
+              [ROW_DATA_ID], [SURVEY_CIRCLE_ID], [YEAR], [MONTH], [PRODUCT_ID],
+              [QT_PRS], [UNIT_PRICE], [TERRITORY_ID], [AREA_ID], [REGION_ID],
+              [TERRITORY_ID], [AREA_ID], [REGION_ID], [PRS_ID], [PSC_DATE]
+            FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
+            ORDER BY [ROW_DATA_ID] DESC
+            """
+        )
+        with SessionFactory() as session:
+            rows = session.execute(sql, {"limit": limit}).all()
+            return _rows_to_dicts(rows)
+
+    return await asyncio.to_thread(_run)
+
+
+#####################################################
+
+
+# 1) Summary statistics for numeric columns
+@router.get("/eda-sales/summary-stats")
+async def eda_summary_stats(request: Request):
+    SessionFactory = request.app.state.SessionFactory
+
+    def _run():
+        sql = text(
+            """
+            SELECT 
+              COUNT(*) AS row_count,
+              -- QT_PRS stats
+              SUM(CASE WHEN [QT_PRS] IS NULL THEN 1 ELSE 0 END) AS qt_nulls,
+              MIN(CAST([QT_PRS] AS FLOAT)) AS qt_min,
+              MAX(CAST([QT_PRS] AS FLOAT)) AS qt_max,
+              AVG(CAST([QT_PRS] AS FLOAT)) AS qt_mean,
+              STDEV(CAST([QT_PRS] AS FLOAT)) AS qt_std,
+              -- UNIT_PRICE stats
+              SUM(CASE WHEN [UNIT_PRICE] IS NULL THEN 1 ELSE 0 END) AS price_nulls,
+              MIN(CAST([UNIT_PRICE] AS FLOAT)) AS price_min,
+              MAX(CAST([UNIT_PRICE] AS FLOAT)) AS price_max,
+              AVG(CAST([UNIT_PRICE] AS FLOAT)) AS price_mean,
+              STDEV(CAST([UNIT_PRICE] AS FLOAT)) AS price_std
+            FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
+            """
+        )
+        with SessionFactory() as session:
+            row = session.execute(sql).first()
+            base = dict(row._mapping) if row else {}
+
+        # Additional quality checks (negatives)
+        with SessionFactory() as session:
+            negs = session.execute(
+                text(
+                    """
+                    SELECT 
+                      SUM(CASE WHEN CAST([QT_PRS] AS FLOAT) < 0 THEN 1 ELSE 0 END) AS qt_neg_count,
+                      SUM(CASE WHEN CAST([UNIT_PRICE] AS FLOAT) < 0 THEN 1 ELSE 0 END) AS price_neg_count
+                    FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
+                    """
+                )
+            ).first()
+            if negs:
+                base.update(dict(negs._mapping))
+        return base
+
+    return await asyncio.to_thread(_run)
+
+
+# 10) Feature Engineering Exploration — Time feature extraction from PSC_DATE
+@router.get("/eda-sales/features/time-extract")
+async def eda_time_features(
+    request: Request,
+    sample: int = Query(5000, ge=100, le=200000),
+):
+    """Extracts basic time features from PSC_DATE for a quick preview: year, month, day_of_week, quarter, is_weekend."""
+    SessionFactory = request.app.state.SessionFactory
+
+    def _run():
+        sql = text(
+            """
+            SELECT TOP (:sample)
+              CAST([YEAR] AS INT) AS [year],
+              CAST([MONTH] AS INT) AS [month],
+              [PSC_DATE] AS psc_date,
+              DATENAME(WEEKDAY, [PSC_DATE]) AS day_name,
+              DATEPART(WEEKDAY, [PSC_DATE]) AS day_of_week,
+              DATEPART(QUARTER, [PSC_DATE]) AS quarter,
+              CASE WHEN DATENAME(WEEKDAY, [PSC_DATE]) IN ('Saturday','Sunday') THEN 1 ELSE 0 END AS is_weekend
+            FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
+            WHERE [PSC_DATE] IS NOT NULL
+            ORDER BY [PSC_DATE] DESC
+            """
+        )
+        with SessionFactory() as session:
+            rows = session.execute(sql, {"sample": sample}).all()
+            return _rows_to_dicts(rows)
+
+    return await asyncio.to_thread(_run)
+
+
+# 11) Feature Engineering — Month-over-Month UNIT_PRICE change per product
+@router.get("/eda-sales/features/price-change-mom")
+async def eda_price_change_mom(
+    request: Request,
+    product_id: Optional[str] = Query(None),
+    start_year: Optional[int] = Query(None),
+    end_year: Optional[int] = Query(None),
+    limit_products: int = Query(200, ge=1, le=5000),
+):
+    """Computes monthly average UNIT_PRICE and MoM percentage change per PRODUCT_ID.
+    Filters by product and year range optional.
+    """
+    SessionFactory = request.app.state.SessionFactory
+
+    def _run():
+        conditions = []
+        params: Dict[str, Any] = {"limit_products": limit_products}
+        if product_id:
+            conditions.append("s.[PRODUCT_ID] = :product_id")
+            params["product_id"] = product_id
+        if start_year is not None:
+            conditions.append("CAST(s.[YEAR] AS INT) >= :start_year")
+            params["start_year"] = int(start_year)
+        if end_year is not None:
+            conditions.append("CAST(s.[YEAR] AS INT) <= :end_year")
+            params["end_year"] = int(end_year)
+        where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+        sql = text(
+            f"""
+            WITH monthly AS (
+              SELECT 
+                s.[PRODUCT_ID], CAST(s.[YEAR] AS INT) AS [year], CAST(s.[MONTH] AS INT) AS [month],
+                AVG(CAST(s.[UNIT_PRICE] AS FLOAT)) AS monthly_price
+              FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY] s
+              {where_clause}
+              GROUP BY s.[PRODUCT_ID], s.[YEAR], s.[MONTH]
+            ),
+            top_prod AS (
+              SELECT TOP (:limit_products) [PRODUCT_ID]
+              FROM monthly
+              GROUP BY [PRODUCT_ID]
+              ORDER BY COUNT(*) DESC
+            ),
+            priced AS (
+              SELECT m.*,
+                LAG(m.monthly_price) OVER (PARTITION BY m.[PRODUCT_ID] ORDER BY m.[year], m.[month]) AS prev_price
+              FROM monthly m
+              JOIN top_prod t ON m.[PRODUCT_ID] = t.[PRODUCT_ID]
+            )
+            SELECT 
+              [PRODUCT_ID], [year], [month], monthly_price,
+              CASE WHEN prev_price IS NULL OR prev_price = 0 THEN NULL
+                   ELSE ((monthly_price - prev_price) / prev_price) * 100.0 END AS pct_change
+            FROM priced
+            ORDER BY [PRODUCT_ID], [year], [month]
+            """
+        )
+        with SessionFactory() as session:
+            rows = session.execute(sql, params).all()
+            return _rows_to_dicts(rows)
+
+    return await asyncio.to_thread(_run)
+
+
+# 12) Feature Engineering — Rolling average quantity over last N months by region
+@router.get("/eda-sales/features/rolling-qty")
+async def eda_rolling_qty(
+    request: Request,
+    window: int = Query(3, ge=2, le=12),
+    region_id: Optional[str] = Query(None),
+):
+    """Computes rolling average of total monthly quantity (QT_PRS) per REGION_ID using a window over the previous N months including current.
+    """
+    SessionFactory = request.app.state.SessionFactory
+
+    def _run():
+        conditions = []
+        params: Dict[str, Any] = {"window": window}
+        if region_id:
+            conditions.append("[REGION_ID] = :region_id")
+            params["region_id"] = region_id
+        where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+        sql = text(
+            f"""
+            WITH monthly AS (
+              SELECT 
+                CAST([YEAR] AS INT) AS [year], CAST([MONTH] AS INT) AS [month],
+                [REGION_ID], SUM(CAST([QT_PRS] AS FLOAT)) AS total_qty
+              FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
+              {where_clause}
+              GROUP BY [REGION_ID], [YEAR], [MONTH]
+            )
+            SELECT 
+              [REGION_ID], [year], [month], total_qty,
+              AVG(total_qty) OVER (
+                PARTITION BY [REGION_ID] 
+                ORDER BY [year], [month]
+                ROWS BETWEEN (:window - 1) PRECEDING AND CURRENT ROW
+              ) AS rolling_avg_qty
+            FROM monthly
+            ORDER BY [REGION_ID], [year], [month]
+            """
+        )
+        with SessionFactory() as session:
+            rows = session.execute(sql, params).all()
+            return _rows_to_dicts(rows)
+
+    return await asyncio.to_thread(_run)
+
+
+# 2) Distribution snapshots (quantiles/IQR) for QT_PRS and UNIT_PRICE
+@router.get("/eda-sales/distribution")
+async def eda_distribution(request: Request):
+    SessionFactory = request.app.state.SessionFactory
+
+    def _quantiles_for(col: str, session) -> Dict[str, Any]:
+        # Pull a sample to estimate distribution efficiently
+        df = pd.read_sql(
+            text(
+                f"""
+                SELECT TOP (100000)
+                  CAST([{col}] AS FLOAT) AS v
+                FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
+                WHERE [{col}] IS NOT NULL
+                ORDER BY [ROW_DATA_ID] DESC
+                """
+            ),
+            session.bind,
+        )
+        if df.empty:
+            return {"count": 0}
+        s = df["v"].dropna()
+        q = s.quantile([0.0, 0.25, 0.5, 0.75, 1.0]).to_dict()
+        iqr = float(q.get(0.75, np.nan) - q.get(0.25, np.nan))
+        return {
+            "count": int(s.size),
+            "min": float(s.min()),
+            "q1": float(q.get(0.25, np.nan)),
+            "median": float(q.get(0.5, np.nan)),
+            "q3": float(q.get(0.75, np.nan)),
+            "max": float(s.max()),
+            "iqr": iqr,
+            "p99": float(s.quantile(0.99)),
+        }
+
+    def _run():
+        with SessionFactory() as session:
+            return {
+                "QT_PRS": _quantiles_for("QT_PRS", session),
+                "UNIT_PRICE": _quantiles_for("UNIT_PRICE", session),
+            }
+
+    return await asyncio.to_thread(_run)
+
+
+# 3) Value counts for categorical IDs
+@router.get("/eda-sales/value-counts")
+async def eda_value_counts(
+    request: Request,
+    top_n: int = Query(50, ge=1, le=1000),
+):
+    SessionFactory = request.app.state.SessionFactory
+
+    def _counts(col: str, session) -> List[Dict[str, Any]]:
+        sql = text(
+            f"""
+            SELECT TOP (:top_n) [{col}] AS value, COUNT(*) AS cnt
+            FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
+            GROUP BY [{col}]
+            ORDER BY cnt DESC
+            """
+        )
+        rows = session.execute(sql, {"top_n": top_n}).all()
+        return _rows_to_dicts(rows)
+
+    def _run():
+        with SessionFactory() as session:
+            return {
+                "PRODUCT_ID": _counts("PRODUCT_ID", session),
+                "SURVEY_CIRCLE_ID": _counts("SURVEY_CIRCLE_ID", session),
+                "TERRITORY_ID": _counts("TERRITORY_ID", session),
+                "AREA_ID": _counts("AREA_ID", session),
+                "REGION_ID": _counts("REGION_ID", session),
+            }
+
+    return await asyncio.to_thread(_run)
+
+
+# 4) Temporal coverage and seasonality
+@router.get("/eda-sales/time-coverage")
+async def eda_time_coverage(request: Request):
+    SessionFactory = request.app.state.SessionFactory
+
+    def _run():
+        with SessionFactory() as session:
+            # Counts per year
+            by_year = _rows_to_dicts(
+                session.execute(
+                    text(
+                        """
+                        SELECT CAST([YEAR] AS INT) AS [year], COUNT(*) AS cnt
+                        FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
+                        GROUP BY [YEAR]
+                        ORDER BY [year]
+                        """
+                    )
+                ).all()
+            )
+            # Counts per month
+            by_month = _rows_to_dicts(
+                session.execute(
+                    text(
+                        """
+                        SELECT CAST([MONTH] AS INT) AS [month], COUNT(*) AS cnt
+                        FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
+                        GROUP BY [MONTH]
+                        ORDER BY [month]
+                        """
+                    )
+                ).all()
+            )
+            return {"by_year": by_year, "by_month": by_month}
+
+    return await asyncio.to_thread(_run)
+
+
+# 5) Relationship: UNIT_PRICE vs QT_PRS (correlation and sample)
+@router.get("/eda-sales/price-quantity-corr")
+async def eda_price_quantity_correlation(
+    request: Request,
+    sample: int = Query(10000, ge=100, le=200000),
+):
+    SessionFactory = request.app.state.SessionFactory
+
+    def _run():
+        with SessionFactory() as session:
+            df = pd.read_sql(
+                text(
+                    """
+                    SELECT TOP (:sample)
+                      CAST([UNIT_PRICE] AS FLOAT) AS unit_price,
+                      CAST([QT_PRS] AS FLOAT) AS qty
+                    FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
+                    WHERE [UNIT_PRICE] IS NOT NULL AND [QT_PRS] IS NOT NULL
+                    ORDER BY [ROW_DATA_ID] DESC
+                    """
+                ),
+                session.bind,
+                params={"sample": sample},
+            )
+        if df.empty:
+            return {"sample": 0, "corr": None}
+        df = df.dropna()
+        corr = float(df["unit_price"].corr(df["qty"])) if df.shape[0] > 1 else None
+        return {"sample": int(df.shape[0]), "corr": corr}
+
+    return await asyncio.to_thread(_run)
+
+
+# 6) REGION_ID vs average UNIT_PRICE
+@router.get("/eda-sales/region-avg-price")
+async def eda_region_avg_price(request: Request, top_n: int = Query(200, ge=1, le=1000)):
+    SessionFactory = request.app.state.SessionFactory
+
+    def _run():
+        sql = text(
+            """
+            SELECT TOP (:top_n)
+              [REGION_ID], AVG(CAST([UNIT_PRICE] AS FLOAT)) AS avg_price,
+              COUNT(*) AS n
+            FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
+            GROUP BY [REGION_ID]
+            ORDER BY avg_price DESC
+            """
+        )
+        with SessionFactory() as session:
+            rows = session.execute(sql, {"top_n": top_n}).all()
+            return _rows_to_dicts(rows)
+
+    return await asyncio.to_thread(_run)
+
+
+# 7) Product price distribution stats (boxplot-like), top by frequency
+@router.get("/eda-sales/product-price-stats")
+async def eda_product_price_stats(
+    request: Request,
+    top_by: str = Query("count", pattern="^(count|revenue)$"),
+    top_n: int = Query(50, ge=1, le=500),
+):
+    SessionFactory = request.app.state.SessionFactory
+
+    def _run():
+        # Select top products by count or revenue, then compute price stats per product via PERCENTILE_CONT
+        order_metric_sql = (
+            "COUNT(*)" if top_by == "count" else "SUM(CAST([QT_PRS] AS FLOAT) * CAST([UNIT_PRICE] AS FLOAT))"
+        )
+        sql = text(
+            f"""
+            WITH top_products AS (
+              SELECT TOP (:top_n) [PRODUCT_ID], {order_metric_sql} AS metric
+              FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
+              GROUP BY [PRODUCT_ID]
+              ORDER BY metric DESC
+            ),
+            prod_prices AS (
+              SELECT s.[PRODUCT_ID], CAST(s.[UNIT_PRICE] AS FLOAT) AS price
+              FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY] s
+              JOIN top_products t ON s.[PRODUCT_ID] = t.[PRODUCT_ID]
+              WHERE s.[UNIT_PRICE] IS NOT NULL
+            )
+            SELECT 
+              [PRODUCT_ID],
+              COUNT(*) AS n,
+              MIN(price) AS min_price,
+              MAX(price) AS max_price,
+              AVG(price) AS avg_price,
+              PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY price) OVER (PARTITION BY [PRODUCT_ID]) AS q1,
+              PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY price) OVER (PARTITION BY [PRODUCT_ID]) AS median,
+              PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY price) OVER (PARTITION BY [PRODUCT_ID]) AS q3
+            FROM prod_prices
+            GROUP BY [PRODUCT_ID]
+            ORDER BY n DESC
+            """
+        )
+        with SessionFactory() as session:
+            rows = session.execute(sql, {"top_n": top_n}).all()
+            # Window percentiles repeat per row; distinct via grouping in Python
+            df = pd.DataFrame(_rows_to_dicts(rows))
+            if df.empty:
+                return []
+            cols = [
+                "PRODUCT_ID",
+                "n",
+                "min_price",
+                "q1",
+                "median",
+                "q3",
+                "max_price",
+                "avg_price",
+            ]
+            df = df[cols].drop_duplicates().sort_values("n", ascending=False)
+            return df.to_dict(orient="records")
+
+    return await asyncio.to_thread(_run)
+
+
+# 8) Missing values per column
+@router.get("/eda-sales/missing-values")
+async def eda_missing_values(request: Request):
+    SessionFactory = request.app.state.SessionFactory
+
+    def _run():
+        sql = text(
+            """
+            SELECT 
+              SUM(CASE WHEN [ROW_DATA_ID] IS NULL THEN 1 ELSE 0 END) AS ROW_DATA_ID,
+              SUM(CASE WHEN [SURVEY_CIRCLE_ID] IS NULL THEN 1 ELSE 0 END) AS SURVEY_CIRCLE_ID,
+              SUM(CASE WHEN [YEAR] IS NULL THEN 1 ELSE 0 END) AS [YEAR],
+              SUM(CASE WHEN [MONTH] IS NULL THEN 1 ELSE 0 END) AS [MONTH],
+              SUM(CASE WHEN [PRODUCT_ID] IS NULL THEN 1 ELSE 0 END) AS PRODUCT_ID,
+              SUM(CASE WHEN [QT_PRS] IS NULL THEN 1 ELSE 0 END) AS QT_PRS,
+              SUM(CASE WHEN [UNIT_PRICE] IS NULL THEN 1 ELSE 0 END) AS UNIT_PRICE,
+              SUM(CASE WHEN [TERRITORY_ID] IS NULL THEN 1 ELSE 0 END) AS TERRITORY_ID,
+              SUM(CASE WHEN [AREA_ID] IS NULL THEN 1 ELSE 0 END) AS AREA_ID,
+              SUM(CASE WHEN [REGION_ID] IS NULL THEN 1 ELSE 0 END) AS REGION_ID,
+              SUM(CASE WHEN [PRS_ID] IS NULL THEN 1 ELSE 0 END) AS PRS_ID,
+              SUM(CASE WHEN [PSC_DATE] IS NULL THEN 1 ELSE 0 END) AS PSC_DATE
+            FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
+            """
+        )
+        with SessionFactory() as session:
+            row = session.execute(sql).first()
+            return dict(row._mapping) if row else {}
+
+    return await asyncio.to_thread(_run)
+
+
+# 9) Duplicate rows count (by composite key excluding ROW_DATA_ID)
+@router.get("/eda-sales/duplicates")
+async def eda_duplicates(request: Request):
+    SessionFactory = request.app.state.SessionFactory
+
+    def _run():
+        sql = text(
+            """
+            SELECT SUM(cnt - 1) AS duplicate_rows
+            FROM (
+              SELECT COUNT(*) AS cnt
+              FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
+              GROUP BY [SURVEY_CIRCLE_ID], [YEAR], [MONTH], [PRODUCT_ID], [QT_PRS], [UNIT_PRICE],
+                       [TERRITORY_ID], [AREA_ID], [REGION_ID], [PRS_ID], [PSC_DATE]
+            ) t
+            WHERE cnt > 1
+            """
+        )
+        with SessionFactory() as session:
+            row = session.execute(sql).first()
+            return dict(row._mapping) if row else {"duplicate_rows": 0}
+
+    return await asyncio.to_thread(_run)
