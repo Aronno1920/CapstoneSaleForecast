@@ -182,7 +182,7 @@ async def eda_sample(request: Request, limit: int = Query(50, ge=1, le=500)):
             SELECT TOP (:limit)
               [ROW_DATA_ID], [SURVEY_CIRCLE_ID], [YEAR], [MONTH], [PRODUCT_ID],
               [QT_PRS], [UNIT_PRICE], [TERRITORY_ID], [AREA_ID], [REGION_ID],
-              [TERRITORY_ID], [AREA_ID], [REGION_ID], [PRS_ID], [PSC_DATE]
+              [TERRITORY_ID], [AREA_ID], [REGION_ID], [PRS_ID]
             FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
             ORDER BY [ROW_DATA_ID] DESC
             """
@@ -245,13 +245,16 @@ async def eda_summary_stats(request: Request):
     return await asyncio.to_thread(_run)
 
 
-# 10) Feature Engineering Exploration — Time feature extraction from PSC_DATE
+# 10) Feature Engineering Exploration — Time feature extraction from YEAR/MONTH only (PSC_DATE removed)
 @router.get("/eda-sales/features/time-extract")
 async def eda_time_features(
     request: Request,
     sample: int = Query(5000, ge=100, le=200000),
 ):
-    """Extracts basic time features from PSC_DATE for a quick preview: year, month, day_of_week, quarter, is_weekend."""
+    """Extracts basic time features from YEAR/MONTH: year, month, quarter.
+
+    Note: PSC_DATE-derived fields (weekday, weekend) are removed.
+    """
     SessionFactory = request.app.state.SessionFactory
 
     def _run():
@@ -260,14 +263,10 @@ async def eda_time_features(
             SELECT TOP (:sample)
               CAST([YEAR] AS INT) AS [year],
               CAST([MONTH] AS INT) AS [month],
-              [PSC_DATE] AS psc_date,
-              DATENAME(WEEKDAY, [PSC_DATE]) AS day_name,
-              DATEPART(WEEKDAY, [PSC_DATE]) AS day_of_week,
-              DATEPART(QUARTER, [PSC_DATE]) AS quarter,
-              CASE WHEN DATENAME(WEEKDAY, [PSC_DATE]) IN ('Saturday','Sunday') THEN 1 ELSE 0 END AS is_weekend
+              ((CAST([MONTH] AS INT) + 2) / 3) AS quarter
             FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
-            WHERE [PSC_DATE] IS NOT NULL
-            ORDER BY [PSC_DATE] DESC
+            WHERE [YEAR] IS NOT NULL AND [MONTH] IS NOT NULL
+            ORDER BY [YEAR] DESC, [MONTH] DESC
             """
         )
         with SessionFactory() as session:
@@ -644,8 +643,7 @@ async def eda_missing_values(request: Request):
               SUM(CASE WHEN [TERRITORY_ID] IS NULL THEN 1 ELSE 0 END) AS TERRITORY_ID,
               SUM(CASE WHEN [AREA_ID] IS NULL THEN 1 ELSE 0 END) AS AREA_ID,
               SUM(CASE WHEN [REGION_ID] IS NULL THEN 1 ELSE 0 END) AS REGION_ID,
-              SUM(CASE WHEN [PRS_ID] IS NULL THEN 1 ELSE 0 END) AS PRS_ID,
-              SUM(CASE WHEN [PSC_DATE] IS NULL THEN 1 ELSE 0 END) AS PSC_DATE
+              SUM(CASE WHEN [PRS_ID] IS NULL THEN 1 ELSE 0 END) AS PRS_ID
             FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
             """
         )
@@ -669,7 +667,7 @@ async def eda_duplicates(request: Request):
               SELECT COUNT(*) AS cnt
               FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
               GROUP BY [SURVEY_CIRCLE_ID], [YEAR], [MONTH], [PRODUCT_ID], [QT_PRS], [UNIT_PRICE],
-                       [TERRITORY_ID], [AREA_ID], [REGION_ID], [PRS_ID], [PSC_DATE]
+                       [TERRITORY_ID], [AREA_ID], [REGION_ID], [PRS_ID]
             ) t
             WHERE cnt > 1
             """
