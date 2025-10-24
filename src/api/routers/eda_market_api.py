@@ -6,7 +6,7 @@ from fastapi import APIRouter, Query, Request
 from sqlalchemy import text
 
 router = APIRouter(
-    tags=["eda-market"],
+    tags=["Market Structure Related - EDA"],
     responses={404: {"description": "Not found"}},
 )
 
@@ -15,8 +15,7 @@ def _rows_to_dicts(rows) -> List[Dict[str, Any]]:
     return [dict(row._mapping) for row in rows]
 
 
-
-
+##############################################
 @router.get("/eda-market/summary")
 async def eda_markets_summary(request: Request):
     SessionFactory = request.app.state.SessionFactory
@@ -419,3 +418,4 @@ async def market_hierarchy_path(request: Request, field_id: str = Query(...), ma
             return _rows_to_dicts(rows)
 
     return await asyncio.to_thread(_run)
+##############################################

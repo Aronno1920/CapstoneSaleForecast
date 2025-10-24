@@ -7,7 +7,7 @@ from fastapi import APIRouter, Query, Request
 from sqlalchemy import text
 
 router = APIRouter(
-    tags=["eda-sales-advanced"],
+    tags=["Sales Related - EDA"],
     responses={404: {"description": "Not found"}},
 )
 

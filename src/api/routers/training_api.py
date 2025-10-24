@@ -2,8 +2,10 @@ import asyncio
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
+from src.services.training_service import train_lightgbm_pipeline, train_prophet_pipeline
+
 router = APIRouter(
-    tags=["train"],
+    tags=["Model Train"],
     responses={404: {"description": "Not found"}}
     )
 
@@ -25,7 +27,6 @@ async def train_lightgbm(req: TrainRequest, request: Request):
     SessionFactory = request.app.state.SessionFactory
 
     def _run():
-        from src.services.training_service import train_lightgbm_pipeline
         with SessionFactory() as session:
             return train_lightgbm_pipeline(session=session, config=config, scope=req.scope, horizon=req.horizon)
 
@@ -39,7 +40,6 @@ async def train_prophet(req: ProphetTrainRequest, request: Request):
     SessionFactory = request.app.state.SessionFactory
 
     def _run():
-        from src.services.training_service import train_prophet_pipeline
         with SessionFactory() as session:
             return train_prophet_pipeline(
                 session=session,

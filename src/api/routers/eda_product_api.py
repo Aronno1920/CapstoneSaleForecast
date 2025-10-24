@@ -6,7 +6,7 @@ from fastapi import APIRouter, Query, Request
 from sqlalchemy import text
 
 router = APIRouter(
-    tags=["eda-product"],
+    tags=["Product Related - EDA"],
     responses={404: {"description": "Not found"}},
 )
 
@@ -15,7 +15,7 @@ def _rows_to_dicts(rows) -> List[Dict[str, Any]]:
     return [dict(row._mapping) for row in rows]
 
 
-
+##############################################
 @router.get("/eda-product/summary")
 async def eda_products_summary(request: Request):
     SessionFactory = request.app.state.SessionFactory
@@ -358,3 +358,4 @@ async def generic_dosage_cooccurrence(request: Request, top_n: int = Query(200, 
             return _rows_to_dicts(rows)
 
     return await asyncio.to_thread(_run)
+##############################################
