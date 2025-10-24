@@ -14,12 +14,8 @@ def _rows_to_dicts(rows) -> List[Dict[str, Any]]:
     return [dict(row._mapping) for row in rows]
 
 
-@router.get("/eda/health")
-async def eda_health():
-    return {"status": "ok"}
-
-
-@router.get("/eda/summary")
+##############################################
+@router.get("/eda-sales/summary")
 async def eda_summary(request: Request):
     SessionFactory = request.app.state.SessionFactory
 
@@ -30,10 +26,10 @@ async def eda_summary(request: Request):
               COUNT(*) AS row_count,
               MIN([YEAR]) AS min_year,
               MAX([YEAR]) AS max_year,
-              COUNT(DISTINCT [PRODUCT_CODE]) AS product_count,
-              COUNT(DISTINCT [REGION_CODE]) AS region_count,
-              COUNT(DISTINCT [AREA_CODE]) AS area_count,
-              COUNT(DISTINCT [TERRITORY_CODE]) AS territory_count
+              COUNT(DISTINCT [PRODUCT_ID]) AS product_count,
+              COUNT(DISTINCT [REGION_ID]) AS region_count,
+              COUNT(DISTINCT [AREA_ID]) AS area_count,
+              COUNT(DISTINCT [TERRITORY_ID]) AS territory_count
             FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
             """
         )
@@ -44,11 +40,8 @@ async def eda_summary(request: Request):
     return await asyncio.to_thread(_run)
 
 
-@router.get("/eda/region-summary")
-async def eda_region_summary(
-    request: Request,
-    year: Optional[int] = Query(None),
-    month: Optional[int] = Query(None),
+@router.get("/eda-sales/region-summary")
+async def eda_region_summary(request: Request, year: Optional[int] = Query(None),month: Optional[int] = Query(None),
 ):
     SessionFactory = request.app.state.SessionFactory
 
@@ -65,13 +58,13 @@ async def eda_region_summary(
         sql = text(
             f"""
             SELECT
-              [REGION_CODE], [AREA_CODE], [TERRITORY_CODE],
+              [REGION_ID], [AREA_ID], [TERRITORY_ID],
               SUM(CAST([QT_PRS] AS FLOAT)) AS total_qty,
               SUM(CAST([QT_PRS] AS FLOAT) * CAST([UNIT_PRICE] AS FLOAT)) AS sales_amount
             FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
             {where_clause}
-            GROUP BY [REGION_CODE], [AREA_CODE], [TERRITORY_CODE]
-            ORDER BY [REGION_CODE], [AREA_CODE], [TERRITORY_CODE]
+            GROUP BY [REGION_ID], [AREA_ID], [TERRITORY_ID]
+            ORDER BY [REGION_ID], [AREA_ID], [TERRITORY_ID]
             """
         )
         with SessionFactory() as session:
@@ -81,31 +74,31 @@ async def eda_region_summary(
     return await asyncio.to_thread(_run)
 
 
-@router.get("/eda/monthly-trend")
+@router.get("/eda-sales/monthly-trend")
 async def eda_monthly_trend(
     request: Request,
-    region_code: Optional[str] = Query(None),
-    area_code: Optional[str] = Query(None),
-    territory_code: Optional[str] = Query(None),
-    product_code: Optional[str] = Query(None),
+    region_id: Optional[str] = Query(None),
+    area_id: Optional[str] = Query(None),
+    territory_id: Optional[str] = Query(None),
+    product_id: Optional[str] = Query(None),
 ):
     SessionFactory = request.app.state.SessionFactory
 
     def _run():
         conditions = []
         params: Dict[str, Any] = {}
-        if region_code:
-            conditions.append("[REGION_CODE] = :region_code")
-            params["region_code"] = region_code
-        if area_code:
-            conditions.append("[AREA_CODE] = :area_code")
-            params["area_code"] = area_code
-        if territory_code:
-            conditions.append("[TERRITORY_CODE] = :territory_code")
-            params["territory_code"] = territory_code
-        if product_code:
-            conditions.append("[PRODUCT_CODE] = :product_code")
-            params["product_code"] = product_code
+        if region_id:
+            conditions.append("[REGION_ID] = :region_id")
+            params["region_id"] = region_id
+        if area_id:
+            conditions.append("[AREA_ID] = :area_id")
+            params["area_id"] = area_id
+        if territory_id:
+            conditions.append("[TERRITORY_ID] = :territory_id")
+            params["territory_id"] = territory_id
+        if product_id:
+            conditions.append("[PRODUCT_ID] = :product_id")
+            params["product_id"] = product_id
         where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         sql = text(
             f"""
@@ -127,14 +120,14 @@ async def eda_monthly_trend(
     return await asyncio.to_thread(_run)
 
 
-@router.get("/eda/top-products")
+@router.get("/eda-sales/top-products")
 async def eda_top_products(
     request: Request,
     year: Optional[int] = Query(None),
     month: Optional[int] = Query(None),
-    region_code: Optional[str] = Query(None),
-    area_code: Optional[str] = Query(None),
-    territory_code: Optional[str] = Query(None),
+    region_id: Optional[str] = Query(None),
+    area_id: Optional[str] = Query(None),
+    territory_id: Optional[str] = Query(None),
     limit: int = Query(10, ge=1, le=200),
 ):
     SessionFactory = request.app.state.SessionFactory
@@ -148,25 +141,25 @@ async def eda_top_products(
         if month is not None:
             conditions.append("[MONTH] = :month")
             params["month"] = month
-        if region_code:
-            conditions.append("[REGION_CODE] = :region_code")
-            params["region_code"] = region_code
-        if area_code:
-            conditions.append("[AREA_CODE] = :area_code")
-            params["area_code"] = area_code
-        if territory_code:
-            conditions.append("[TERRITORY_CODE] = :territory_code")
-            params["territory_code"] = territory_code
+        if region_id:
+            conditions.append("[REGION_ID] = :region_id")
+            params["region_id"] = region_id
+        if area_id:
+            conditions.append("[AREA_ID] = :area_id")
+            params["area_id"] = area_id
+        if territory_id:
+            conditions.append("[TERRITORY_ID] = :territory_id")
+            params["territory_id"] = territory_id
         where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         sql = text(
             f"""
             SELECT TOP (:limit)
-              [PRODUCT_CODE],
+              [PRODUCT_ID],
               SUM(CAST([QT_PRS] AS FLOAT)) AS total_qty,
               SUM(CAST([QT_PRS] AS FLOAT) * CAST([UNIT_PRICE] AS FLOAT)) AS sales_amount
             FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
             {where_clause}
-            GROUP BY [PRODUCT_CODE]
+            GROUP BY [PRODUCT_ID]
             ORDER BY sales_amount DESC
             """
         )
@@ -177,7 +170,7 @@ async def eda_top_products(
     return await asyncio.to_thread(_run)
 
 
-@router.get("/eda/sample")
+@router.get("/eda-sales/sample")
 async def eda_sample(request: Request, limit: int = Query(50, ge=1, le=500)):
     SessionFactory = request.app.state.SessionFactory
 
@@ -185,8 +178,8 @@ async def eda_sample(request: Request, limit: int = Query(50, ge=1, le=500)):
         sql = text(
             """
             SELECT TOP (:limit)
-              [ROW_DATA_ID], [SURVEY_CIRCLE_ID], [YEAR], [MONTH], [PRODUCT_CODE], [PRODUCT_ID],
-              [QT_PRS], [UNIT_PRICE], [TERRITORY_CODE], [AREA_CODE], [REGION_CODE],
+              [ROW_DATA_ID], [SURVEY_CIRCLE_ID], [YEAR], [MONTH], [PRODUCT_ID],
+              [QT_PRS], [UNIT_PRICE], [TERRITORY_ID], [AREA_ID], [REGION_ID],
               [TERRITORY_ID], [AREA_ID], [REGION_ID], [PRS_ID], [PSC_DATE]
             FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
             ORDER BY [ROW_DATA_ID] DESC
@@ -197,3 +190,4 @@ async def eda_sample(request: Request, limit: int = Query(50, ge=1, le=500)):
             return _rows_to_dicts(rows)
 
     return await asyncio.to_thread(_run)
+##############################################
