@@ -1,10 +1,10 @@
 from __future__ import annotations
 from pathlib import Path
 import pandas as pd
-from ..utils.config import AppConfig
-from ..database.queries import fetch_sales_aggregated
-from ..utils.preprocessing import prepare_time_series
-from ..models.prophet_model import ProphetWrapper
+from src.utils.config import AppConfig
+from src.database.queries import fetch_sales_aggregated
+from src.utils.preprocessing import prepare_time_series
+from src.models.prophet_model import ProphetWrapper
 
 
 def _artifact_path(config: AppConfig, scope: str, key_vals) -> Path:

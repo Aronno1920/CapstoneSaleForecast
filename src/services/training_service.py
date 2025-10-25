@@ -104,55 +104,63 @@ def train_prophet_pipeline(session, config: AppConfig, scope: str, seasonality_m
 
     Saves one model per key under artifacts/<scope>/prophet/<key>/model.pkl
     """
-    df = _fetch_sales_aggregated_any(session, scope=scope)
-    if df.empty:
-        # Diagnostics to help understand emptiness
-        diag = _df_from_sql(
-            session,
-            text(
-                """
-                SELECT COUNT(*) AS rows_all,
-                       SUM(CASE WHEN [YEAR] IS NOT NULL AND [MONTH] IS NOT NULL THEN 1 ELSE 0 END) AS rows_with_period
-                FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
-                """
-            ),
-        )
-        info = diag.iloc[0].to_dict() if not diag.empty else {}
-        return {
-            "status": "no_data",
-            "message": "No sales data available from DB",
-            "scope": scope,
-            "debug": info,
-        }
-
-    # Sanitize period columns before building time series
-    df = _sanitize_year_month(df)
-    if df.empty:
-        return {"status": "no_data", "message": "No usable Year/Month after sanitization", "scope": scope}
     try:
-        ts = prepare_time_series(df, scope=scope)
+        df = _fetch_sales_aggregated_any(session, scope=scope)
+        if df.empty:
+            # Diagnostics to help understand emptiness
+            diag = _df_from_sql(
+                session,
+                text(
+                    """
+                    SELECT COUNT(*) AS rows_all,
+                           SUM(CASE WHEN [YEAR] IS NOT NULL AND [MONTH] IS NOT NULL THEN 1 ELSE 0 END) AS rows_with_period
+                    FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
+                    """
+                ),
+            )
+            info = diag.iloc[0].to_dict() if not diag.empty else {}
+            return {
+                "status": "no_data",
+                "message": "No sales data available from DB",
+                "scope": scope,
+                "debug": info,
+            }
+
+        # Sanitize period columns before building time series
+        df = _sanitize_year_month(df)
+        if df.empty:
+            return {"status": "no_data", "message": "No usable Year/Month after sanitization", "scope": scope}
+        try:
+            ts = prepare_time_series(df, scope=scope)
+        except Exception as e:
+            return {"status": "error", "message": "prepare_time_series failed", "error": str(e), "columns": list(df.columns)}
+
+        keys = {
+            "territory": ["Region", "Area", "Territory"],
+            "area": ["Region", "Area"],
+            "region": ["Region"],
+        }[scope]
+
+        artifacts: List[str] = []
+        for key_vals, grp in ts.groupby(keys):
+            g = grp.sort_values("ds").copy()
+            g = g.dropna(subset=["y"])  # ensure Prophet receives valid observations
+            if len(g) < 2:
+                continue  # skip groups with insufficient data
+
+            model = ProphetWrapper(seasonality_mode=seasonality_mode)
+            model.fit(g.rename(columns={"ds": "ds", "y": "y"}))
+            key_dir = Path(config.artifacts_dir) / scope / "prophet" / "__".join(
+                map(str, key_vals if isinstance(key_vals, tuple) else (key_vals,))
+            )
+            key_dir.mkdir(parents=True, exist_ok=True)
+            model_path = key_dir / "model.pkl"
+            model.save(model_path)
+            artifacts.append(str(model_path))
+
+        return {"status": "ok", "trained": len(artifacts), "artifacts": artifacts}
     except Exception as e:
-        return {"status": "error", "message": "prepare_time_series failed", "error": str(e), "columns": list(df.columns)}
-
-    keys = {
-        "territory": ["Region", "Area", "Territory"],
-        "area": ["Region", "Area"],
-        "region": ["Region"],
-    }[scope]
-
-    artifacts: List[str] = []
-    for key_vals, grp in ts.groupby(keys):
-        model = ProphetWrapper(seasonality_mode=seasonality_mode)
-        model.fit(grp.rename(columns={"ds": "ds", "y": "y"}))
-        key_dir = Path(config.artifacts_dir) / scope / "prophet" / "__".join(
-            map(str, key_vals if isinstance(key_vals, tuple) else (key_vals,))
-        )
-        key_dir.mkdir(parents=True, exist_ok=True)
-        model_path = key_dir / "model.pkl"
-        model.save(model_path)
-        artifacts.append(str(model_path))
-
-    return {"status": "ok", "trained": len(artifacts), "artifacts": artifacts}
+        return {"status": "error", "message": "train_prophet failed", "error": str(e)}
 
 
 def train_lightgbm_pipeline(session, config: AppConfig, scope: str, horizon: int = 6) -> dict:
@@ -176,6 +184,10 @@ def train_lightgbm_pipeline(session, config: AppConfig, scope: str, horizon: int
             )
             info = diag.iloc[0].to_dict() if not diag.empty else {}
             return {"status": "no_data", "message": "No sales data available from DB", "scope": scope, "debug": info}
+
+        df = _sanitize_year_month(df)
+        if df.empty:
+            return {"status": "no_data", "message": "No usable Year/Month after sanitization", "scope": scope}
 
         ts = prepare_time_series(df, scope=scope)
 

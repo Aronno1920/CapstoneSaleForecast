@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from ..utils.config import AppConfig
 from ..database.connection import create_session_factory
-from .routers import training_api, forecast_api, eda_sales_api, eda_product_api, eda_market_api
+from .routers import training_api, forecast_api, eda_sales_api, eda_product_api, eda_market_api, evaluation_api
 
 
 # Configure logging (basic)
@@ -50,7 +50,16 @@ async def root() -> Dict[str, Any]:
         "name": "Sales Forecast API",
         "version": "1.0.0",
         "description": "Sales forecasting over Region/Area/Territory/Year/Month",
-        "routers": ["/eda-market", "/eda-product", "/eda-sales", "/train-lightgbm", "/train-prophet"],
+        "routers": [
+            "/eda-market",
+            "/eda-product",
+            "/eda-sales",
+            "/train-lightgbm",
+            "/train-prophet",
+            "/forecast-grid",
+            "/evaluate-prophet",
+            "/evaluate-lightgbm",
+        ],
         "docs": "/docs",
         "redoc": "/redoc",
         "timestamp": time.time(),
@@ -62,4 +71,5 @@ app.include_router(eda_product_api.router)
 app.include_router(eda_market_api.router)
 app.include_router(eda_sales_api.router)
 app.include_router(training_api.router)
+app.include_router(evaluation_api.router)
 app.include_router(forecast_api.router)

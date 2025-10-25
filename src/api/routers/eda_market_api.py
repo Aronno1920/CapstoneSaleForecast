@@ -175,29 +175,6 @@ async def market_hierarchy_integrity(request: Request, sample: int = Query(200, 
     return await asyncio.to_thread(_run)
 
 
-# 3) Name consistency by level (distinct names per level)
-@router.get("/eda-market/name-consistency")
-async def market_name_consistency(request: Request):
-    SessionFactory = request.app.state.SessionFactory
-
-    def _run():
-        sql = text(
-            """
-            SELECT CAST([MKT_LEVEL] AS INT) AS level,
-                   COUNT(DISTINCT [MKT_NAME]) AS distinct_names,
-                   COUNT(*) AS row_count
-            FROM [MIS_OLL].[dbo].[SYS_MARKET_HO]
-            GROUP BY [MKT_LEVEL]
-            ORDER BY level
-            """
-        )
-        with SessionFactory() as session:
-            rows = session.execute(sql).all()
-            return _rows_to_dicts(rows)
-
-    return await asyncio.to_thread(_run)
-
-
 # 4) FIELD_ID uniqueness check
 @router.get("/eda-market/field-uniqueness")
 async def market_field_uniqueness(request: Request, list_limit: int = Query(200, ge=1, le=5000)):
@@ -228,13 +205,6 @@ async def market_field_uniqueness(request: Request, list_limit: int = Query(200,
 
     return await asyncio.to_thread(_run)
 
-
-# 5) Text quality for MKT_NAME
-@router.get("/eda-market/text-quality")
-async def market_text_quality(
-    request: Request,
-    sample: int = Query(50000, ge=100, le=200000),
-):
     SessionFactory = request.app.state.SessionFactory
 
     def _run():
@@ -297,76 +267,6 @@ async def market_missing_values(request: Request):
     return await asyncio.to_thread(_run)
 
 
-# 7) MKT_CODE_OLD correlation and redundancy with FIELD_ID
-@router.get("/eda-market/code-old-correlation")
-async def market_code_old_correlation(request: Request, list_limit: int = Query(200, ge=1, le=5000)):
-    SessionFactory = request.app.state.SessionFactory
-
-    def _run():
-        summary_sql = text(
-            """
-            SELECT 
-              COUNT(DISTINCT [MKT_CODE_OLD]) AS distinct_code_old,
-              SUM(CASE WHEN [MKT_CODE_OLD] IS NULL THEN 1 ELSE 0 END) AS null_code_old,
-              COUNT(*) AS total_rows
-            FROM [MIS_OLL].[dbo].[SYS_MARKET_HO]
-            """
-        )
-        # Code-old to field_id mapping uniqueness
-        mapping_sql = text(
-            """
-            SELECT TOP (:limit) [MKT_CODE_OLD], COUNT(DISTINCT [FIELD_ID]) AS field_ids
-            FROM [MIS_OLL].[dbo].[SYS_MARKET_HO]
-            WHERE [MKT_CODE_OLD] IS NOT NULL
-            GROUP BY [MKT_CODE_OLD]
-            HAVING COUNT(DISTINCT [FIELD_ID]) > 1
-            ORDER BY field_ids DESC
-            """
-        )
-        with SessionFactory() as session:
-            summary = dict(session.execute(summary_sql).first()._mapping)
-            clashes = _rows_to_dicts(session.execute(mapping_sql, {"limit": list_limit}).all())
-        return {"summary": summary, "code_old_to_field_clashes": clashes}
-
-    return await asyncio.to_thread(_run)
-
-
-# 8) Feature engineering — depth (levels up to root) per FIELD_ID via recursive CTE
-@router.get("/eda-market/depth")
-async def market_depth(request: Request, field_id: Optional[str] = Query(None), top_n: int = Query(500, ge=1, le=5000)):
-    SessionFactory = request.app.state.SessionFactory
-
-    def _run():
-        filter_clause = "WHERE FIELD_ID = :field_id" if field_id else ""
-        params: Dict[str, Any] = {"top_n": top_n}
-        if field_id:
-            params["field_id"] = field_id
-        sql = text(
-            f"""
-            WITH RECURSIVE_HO AS (
-              SELECT 
-                h.[FIELD_ID], h.[MKT_NAME], h.[MKT_LEVEL], h.[PARENT_MKT_CODE], 0 AS depth
-              FROM [MIS_OLL].[dbo].[SYS_MARKET_HO] h
-              {filter_clause}
-              UNION ALL
-              SELECT 
-                c.[FIELD_ID], c.[MKT_NAME], c.[MKT_LEVEL], c.[PARENT_MKT_CODE], p.depth + 1
-              FROM [MIS_OLL].[dbo].[SYS_MARKET_HO] c
-              JOIN RECURSIVE_HO p ON c.[FIELD_ID] = p.[PARENT_MKT_CODE]
-            )
-            SELECT TOP (:top_n) [FIELD_ID], MAX(depth) AS depth
-            FROM RECURSIVE_HO
-            GROUP BY [FIELD_ID]
-            ORDER BY depth DESC
-            """
-        )
-        with SessionFactory() as session:
-            rows = session.execute(sql, params).all()
-            return _rows_to_dicts(rows)
-
-    return await asyncio.to_thread(_run)
-
-
 # 9) Feature engineering — breadth: children count per parent
 @router.get("/eda-market/children-count")
 async def market_children_count(request: Request, top_n: int = Query(500, ge=1, le=10000)):
@@ -402,11 +302,11 @@ async def market_hierarchy_path(request: Request, field_id: str = Query(...), ma
             ;WITH cte AS (
               SELECT [FIELD_ID], [MKT_NAME], [MKT_LEVEL], [PARENT_MKT_CODE], 0 AS depth
               FROM [MIS_OLL].[dbo].[SYS_MARKET_HO]
-              WHERE [FIELD_ID] = :field_id
+              WHERE [FIELD_ID] = :id OR [MKT_CODE_OLD] = :id
               UNION ALL
               SELECT p.[FIELD_ID], p.[MKT_NAME], p.[MKT_LEVEL], p.[PARENT_MKT_CODE], cte.depth + 1
               FROM [MIS_OLL].[dbo].[SYS_MARKET_HO] p
-              JOIN cte ON p.[FIELD_ID] = cte.[PARENT_MKT_CODE]
+              JOIN cte ON p.[MKT_CODE_OLD] = cte.[PARENT_MKT_CODE]
               WHERE cte.depth < :max_steps
             )
             SELECT * FROM cte
@@ -414,7 +314,7 @@ async def market_hierarchy_path(request: Request, field_id: str = Query(...), ma
             """
         )
         with SessionFactory() as session:
-            rows = session.execute(sql, {"field_id": field_id, "max_steps": max_steps}).all()
+            rows = session.execute(sql, {"id": field_id, "max_steps": max_steps}).all()
             return _rows_to_dicts(rows)
 
     return await asyncio.to_thread(_run)

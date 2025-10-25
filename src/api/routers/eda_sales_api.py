@@ -85,7 +85,6 @@ async def eda_monthly_trend(
     product_id: Optional[str] = Query(None),
 ):
     SessionFactory = request.app.state.SessionFactory
-
     def _run():
         conditions = []
         params: Dict[str, Any] = {}
@@ -133,7 +132,6 @@ async def eda_top_products(
     limit: int = Query(10, ge=1, le=200),
 ):
     SessionFactory = request.app.state.SessionFactory
-
     def _run():
         conditions = []
         params: Dict[str, Any] = {"limit": limit}
@@ -175,7 +173,6 @@ async def eda_top_products(
 @router.get("/eda-sales/sample")
 async def eda_sample(request: Request, limit: int = Query(50, ge=1, le=500)):
     SessionFactory = request.app.state.SessionFactory
-
     def _run():
         sql = text(
             """
@@ -192,9 +189,6 @@ async def eda_sample(request: Request, limit: int = Query(50, ge=1, le=500)):
             return _rows_to_dicts(rows)
 
     return await asyncio.to_thread(_run)
-
-
-#####################################################
 
 
 # 1) Summary statistics for numeric columns
@@ -256,7 +250,6 @@ async def eda_time_features(
     Note: PSC_DATE-derived fields (weekday, weekend) are removed.
     """
     SessionFactory = request.app.state.SessionFactory
-
     def _run():
         sql = text(
             """
@@ -289,7 +282,6 @@ async def eda_price_change_mom(
     Filters by product and year range optional.
     """
     SessionFactory = request.app.state.SessionFactory
-
     def _run():
         conditions = []
         params: Dict[str, Any] = {"limit_products": limit_products}
@@ -351,7 +343,6 @@ async def eda_rolling_qty(
     """Computes rolling average of total monthly quantity (QT_PRS) per REGION_ID using a window over the previous N months including current.
     """
     SessionFactory = request.app.state.SessionFactory
-
     def _run():
         conditions = []
         params: Dict[str, Any] = {"window": window}
@@ -391,8 +382,8 @@ async def eda_rolling_qty(
 # 2) Distribution snapshots (quantiles/IQR) for QT_PRS and UNIT_PRICE
 @router.get("/eda-sales/distribution")
 async def eda_distribution(request: Request):
+    
     SessionFactory = request.app.state.SessionFactory
-
     def _quantiles_for(col: str, session) -> Dict[str, Any]:
         # Pull a sample to estimate distribution efficiently
         df = pd.read_sql(
@@ -422,7 +413,6 @@ async def eda_distribution(request: Request):
             "iqr": iqr,
             "p99": float(s.quantile(0.99)),
         }
-
     def _run():
         with SessionFactory() as session:
             return {
@@ -440,7 +430,6 @@ async def eda_value_counts(
     top_n: int = Query(50, ge=1, le=1000),
 ):
     SessionFactory = request.app.state.SessionFactory
-
     def _counts(col: str, session) -> List[Dict[str, Any]]:
         sql = text(
             f"""
@@ -470,7 +459,6 @@ async def eda_value_counts(
 @router.get("/eda-sales/time-coverage")
 async def eda_time_coverage(request: Request):
     SessionFactory = request.app.state.SessionFactory
-
     def _run():
         with SessionFactory() as session:
             # Counts per year
@@ -511,7 +499,6 @@ async def eda_price_quantity_correlation(
     sample: int = Query(10000, ge=100, le=200000),
 ):
     SessionFactory = request.app.state.SessionFactory
-
     def _run():
         with SessionFactory() as session:
             df = pd.read_sql(
@@ -558,122 +545,5 @@ async def eda_region_avg_price(request: Request, top_n: int = Query(200, ge=1, l
             return _rows_to_dicts(rows)
 
     return await asyncio.to_thread(_run)
+#####################################################
 
-
-# 7) Product price distribution stats (boxplot-like), top by frequency
-@router.get("/eda-sales/product-price-stats")
-async def eda_product_price_stats(
-    request: Request,
-    top_by: str = Query("count", pattern="^(count|revenue)$"),
-    top_n: int = Query(50, ge=1, le=500),
-):
-    SessionFactory = request.app.state.SessionFactory
-
-    def _run():
-        # Select top products by count or revenue, then compute price stats per product via PERCENTILE_CONT
-        order_metric_sql = (
-            "COUNT(*)" if top_by == "count" else "SUM(CAST([QT_PRS] AS FLOAT) * CAST([UNIT_PRICE] AS FLOAT))"
-        )
-        sql = text(
-            f"""
-            WITH top_products AS (
-              SELECT TOP (:top_n) [PRODUCT_ID], {order_metric_sql} AS metric
-              FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
-              GROUP BY [PRODUCT_ID]
-              ORDER BY metric DESC
-            ),
-            prod_prices AS (
-              SELECT s.[PRODUCT_ID], CAST(s.[UNIT_PRICE] AS FLOAT) AS price
-              FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY] s
-              JOIN top_products t ON s.[PRODUCT_ID] = t.[PRODUCT_ID]
-              WHERE s.[UNIT_PRICE] IS NOT NULL
-            )
-            SELECT 
-              [PRODUCT_ID],
-              COUNT(*) AS n,
-              MIN(price) AS min_price,
-              MAX(price) AS max_price,
-              AVG(price) AS avg_price,
-              PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY price) OVER (PARTITION BY [PRODUCT_ID]) AS q1,
-              PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY price) OVER (PARTITION BY [PRODUCT_ID]) AS median,
-              PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY price) OVER (PARTITION BY [PRODUCT_ID]) AS q3
-            FROM prod_prices
-            GROUP BY [PRODUCT_ID]
-            ORDER BY n DESC
-            """
-        )
-        with SessionFactory() as session:
-            rows = session.execute(sql, {"top_n": top_n}).all()
-            # Window percentiles repeat per row; distinct via grouping in Python
-            df = pd.DataFrame(_rows_to_dicts(rows))
-            if df.empty:
-                return []
-            cols = [
-                "PRODUCT_ID",
-                "n",
-                "min_price",
-                "q1",
-                "median",
-                "q3",
-                "max_price",
-                "avg_price",
-            ]
-            df = df[cols].drop_duplicates().sort_values("n", ascending=False)
-            return df.to_dict(orient="records")
-
-    return await asyncio.to_thread(_run)
-
-
-# 8) Missing values per column
-@router.get("/eda-sales/missing-values")
-async def eda_missing_values(request: Request):
-    SessionFactory = request.app.state.SessionFactory
-
-    def _run():
-        sql = text(
-            """
-            SELECT 
-              SUM(CASE WHEN [ROW_DATA_ID] IS NULL THEN 1 ELSE 0 END) AS ROW_DATA_ID,
-              SUM(CASE WHEN [SURVEY_CIRCLE_ID] IS NULL THEN 1 ELSE 0 END) AS SURVEY_CIRCLE_ID,
-              SUM(CASE WHEN [YEAR] IS NULL THEN 1 ELSE 0 END) AS [YEAR],
-              SUM(CASE WHEN [MONTH] IS NULL THEN 1 ELSE 0 END) AS [MONTH],
-              SUM(CASE WHEN [PRODUCT_ID] IS NULL THEN 1 ELSE 0 END) AS PRODUCT_ID,
-              SUM(CASE WHEN [QT_PRS] IS NULL THEN 1 ELSE 0 END) AS QT_PRS,
-              SUM(CASE WHEN [UNIT_PRICE] IS NULL THEN 1 ELSE 0 END) AS UNIT_PRICE,
-              SUM(CASE WHEN [TERRITORY_ID] IS NULL THEN 1 ELSE 0 END) AS TERRITORY_ID,
-              SUM(CASE WHEN [AREA_ID] IS NULL THEN 1 ELSE 0 END) AS AREA_ID,
-              SUM(CASE WHEN [REGION_ID] IS NULL THEN 1 ELSE 0 END) AS REGION_ID,
-              SUM(CASE WHEN [PRS_ID] IS NULL THEN 1 ELSE 0 END) AS PRS_ID
-            FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
-            """
-        )
-        with SessionFactory() as session:
-            row = session.execute(sql).first()
-            return dict(row._mapping) if row else {}
-
-    return await asyncio.to_thread(_run)
-
-
-# 9) Duplicate rows count (by composite key excluding ROW_DATA_ID)
-@router.get("/eda-sales/duplicates")
-async def eda_duplicates(request: Request):
-    SessionFactory = request.app.state.SessionFactory
-
-    def _run():
-        sql = text(
-            """
-            SELECT SUM(cnt - 1) AS duplicate_rows
-            FROM (
-              SELECT COUNT(*) AS cnt
-              FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
-              GROUP BY [SURVEY_CIRCLE_ID], [YEAR], [MONTH], [PRODUCT_ID], [QT_PRS], [UNIT_PRICE],
-                       [TERRITORY_ID], [AREA_ID], [REGION_ID], [PRS_ID]
-            ) t
-            WHERE cnt > 1
-            """
-        )
-        with SessionFactory() as session:
-            row = session.execute(sql).first()
-            return dict(row._mapping) if row else {"duplicate_rows": 0}
-
-    return await asyncio.to_thread(_run)

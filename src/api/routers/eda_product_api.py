@@ -53,7 +53,6 @@ async def eda_products(
     limit: int = Query(100, ge=1, le=1000),
 ):
     SessionFactory = request.app.state.SessionFactory
-
     def _run():
         conditions = []
         params: Dict[str, Any] = {"limit": limit}
@@ -233,41 +232,7 @@ async def product_value_counts(request: Request, top_n: int = Query(50, ge=1, le
     return await asyncio.to_thread(_run)
 
 
-# 5) Text length analysis for PRODUCT_NAME
-@router.get("/eda-product/name-length-stats")
-async def product_name_length_stats(request: Request):
-    SessionFactory = request.app.state.SessionFactory
-
-    def _run():
-        with SessionFactory() as session:
-            df = pd.read_sql(
-                text(
-                    """
-                    SELECT [PRODUCT_ID], [PRODUCT_NAME]
-                    FROM [MIS_OLL].[dbo].[MIS_PARTY_PRODUCT]
-                    WHERE [PRODUCT_NAME] IS NOT NULL
-                    """
-                ),
-                session.bind,
-            )
-        if df.empty:
-            return {}
-        s = df["PRODUCT_NAME"].astype(str).str.len()
-        q = s.quantile([0.0, 0.25, 0.5, 0.75, 1.0]).to_dict()
-        return {
-            "count": int(s.size),
-            "min": int(s.min()),
-            "q1": float(q.get(0.25)),
-            "median": float(q.get(0.5)),
-            "q3": float(q.get(0.75)),
-            "max": int(s.max()),
-            "avg": float(s.mean()),
-        }
-
-    return await asyncio.to_thread(_run)
-
-
-# 6) Text standardization issues (leading/trailing spaces, case variants)
+# 5) Text standardization issues (leading/trailing spaces, case variants)
 @router.get("/eda-product/text-quality")
 async def product_text_quality(
     request: Request,
@@ -309,36 +274,7 @@ async def product_text_quality(
     return await asyncio.to_thread(_run)
 
 
-# 7) Consistency check: PRODUCT_ID maps consistently to other attributes
-@router.get("/eda-product/consistency")
-async def product_consistency(request: Request, list_limit: int = Query(200, ge=1, le=5000)):
-    SessionFactory = request.app.state.SessionFactory
-
-    def _run():
-        sql = text(
-            """
-            SELECT TOP (:limit) [PRODUCT_ID]
-            FROM (
-              SELECT [PRODUCT_ID],
-                     COUNT(DISTINCT [PRODUCT_CODE]) AS codes,
-                     COUNT(DISTINCT [PRODUCT_NAME]) AS names,
-                     COUNT(DISTINCT [PHARMA_NAME]) AS pharmas,
-                     COUNT(DISTINCT [GENERIC_NAME]) AS generics,
-                     COUNT(DISTINCT [DOSAGE_NAME]) AS dosages
-              FROM [MIS_OLL].[dbo].[MIS_PARTY_PRODUCT]
-              GROUP BY [PRODUCT_ID]
-            ) t
-            WHERE codes > 1 OR names > 1 OR pharmas > 1 OR generics > 1 OR dosages > 1
-            """
-        )
-        with SessionFactory() as session:
-            bad_ids = [r._mapping["PRODUCT_ID"] for r in session.execute(sql, {"limit": list_limit}).all()]
-        return {"inconsistent_product_ids": bad_ids}
-
-    return await asyncio.to_thread(_run)
-
-
-# 8) Co-occurrence between GENERIC_NAME and DOSAGE_NAME
+# 6) Co-occurrence between GENERIC_NAME and DOSAGE_NAME
 @router.get("/eda-product/generic-dosage-cooccurrence")
 async def generic_dosage_cooccurrence(request: Request, top_n: int = Query(200, ge=1, le=2000)):
     SessionFactory = request.app.state.SessionFactory
