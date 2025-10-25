@@ -31,11 +31,20 @@ def _fetch_sales_aggregated_any(session, scope: str) -> pd.DataFrame:
         return df
 
     group_cols_map = {
-        "territory": ("[REGION_ID] AS Region, [AREA_ID] AS Area, [TERRITORY_ID] AS Territory", "Region, Area, Territory"),
-        "area": ("[REGION_ID] AS Region, [AREA_ID] AS Area", "Region, Area"),
-        "region": ("[REGION_ID] AS Region", "Region"),
+        "territory": (
+            "[REGION_ID] AS Region, [AREA_ID] AS Area, [TERRITORY_ID] AS Territory",
+            "[REGION_ID], [AREA_ID], [TERRITORY_ID]",
+        ),
+        "area": (
+            "[REGION_ID] AS Region, [AREA_ID] AS Area",
+            "[REGION_ID], [AREA_ID]",
+        ),
+        "region": (
+            "[REGION_ID] AS Region",
+            "[REGION_ID]",
+        ),
     }
-    select_cols, group_cols_alias = group_cols_map[scope]
+    select_cols, group_cols_expr = group_cols_map[scope]
 
     # Attempt 1: Revenue using YEAR/MONTH only (no PSC_DATE)
     sql_rev = text(
@@ -45,8 +54,8 @@ def _fetch_sales_aggregated_any(session, scope: str) -> pd.DataFrame:
                SUM(CAST(COALESCE([QT_PRS],0) AS FLOAT) * CAST(COALESCE([UNIT_PRICE],0) AS FLOAT)) AS SalesAmount
         FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
         WHERE [YEAR] IS NOT NULL AND [MONTH] IS NOT NULL
-        GROUP BY {group_cols_alias}, [YEAR], [MONTH]
-        ORDER BY {group_cols_alias}, [YEAR], [MONTH]
+        GROUP BY {group_cols_expr}, [YEAR], [MONTH]
+        ORDER BY {group_cols_expr}, [YEAR], [MONTH]
         """
     )
     df_fb = _df_from_sql(session, sql_rev)
@@ -62,12 +71,32 @@ def _fetch_sales_aggregated_any(session, scope: str) -> pd.DataFrame:
                SUM(CAST(COALESCE([QT_PRS],0) AS FLOAT)) AS SalesAmount
         FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
         WHERE [YEAR] IS NOT NULL AND [MONTH] IS NOT NULL
-        GROUP BY {group_cols_alias}, [YEAR], [MONTH]
-        ORDER BY {group_cols_alias}, [YEAR], [MONTH]
+        GROUP BY {group_cols_expr}, [YEAR], [MONTH]
+        ORDER BY {group_cols_expr}, [YEAR], [MONTH]
         """
     )
     df_fb2 = _df_from_sql(session, sql_qty)
     return df_fb2
+
+
+def _sanitize_year_month(df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure Year/Month are valid integers and months in 1..12. Drop invalid rows.
+
+    Also cast to int to avoid downstream parsing errors.
+    """
+    if df.empty:
+        return df
+    out = df.copy()
+    out["Year"] = pd.to_numeric(out["Year"], errors="coerce").astype("Int64")
+    out["Month"] = pd.to_numeric(out["Month"], errors="coerce").astype("Int64")
+    out = out[(out["Year"].notna()) & (out["Month"].notna())]
+    out = out[(out["Month"] >= 1) & (out["Month"] <= 12)]
+    # Optional reasonable year bounds to filter corrupted values
+    out = out[(out["Year"] >= 1900) & (out["Year"] <= 2100)]
+    # Cast back to int
+    out["Year"] = out["Year"].astype(int)
+    out["Month"] = out["Month"].astype(int)
+    return out
 
 
 def train_prophet_pipeline(session, config: AppConfig, scope: str, seasonality_mode: str = "additive") -> dict:
@@ -96,6 +125,10 @@ def train_prophet_pipeline(session, config: AppConfig, scope: str, seasonality_m
             "debug": info,
         }
 
+    # Sanitize period columns before building time series
+    df = _sanitize_year_month(df)
+    if df.empty:
+        return {"status": "no_data", "message": "No usable Year/Month after sanitization", "scope": scope}
     try:
         ts = prepare_time_series(df, scope=scope)
     except Exception as e:
