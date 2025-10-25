@@ -2,12 +2,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List
 import pandas as pd
-from ..utils.config import AppConfig
-from ..database.queries import fetch_sales_aggregated
-from ..utils.preprocessing import prepare_time_series
-from ..models.prophet_model import ProphetWrapper
-from ..models.lightgbm_model import LightGBMWrapper
-from ..utils.features import add_lag_features, add_time_features
+from src.utils.config import AppConfig
+from src.database.queries import fetch_sales_aggregated
+from src.utils.preprocessing import prepare_time_series
+from src.models.prophet_model import ProphetWrapper
+from src.models.lightgbm_model import LightGBMWrapper
+from src.utils.features import add_lag_features, add_time_features
 from sqlalchemy import text
 
 
