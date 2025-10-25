@@ -1,7 +1,7 @@
 """
 FastAPI REST API for Sales Forecast System with organized routers
 """
-
+import time
 import logging
 from typing import Any, Dict
 from fastapi import FastAPI
@@ -49,9 +49,10 @@ async def root() -> Dict[str, Any]:
     return {
         "name": "Sales Forecast API",
         "version": "1.0.0",
-        "description": "Sales forecasting over Region/Area/Territory",
-        "routers": ["/health", "/status", "/train", "/forecast"],
+        "description": "Sales forecasting over Region/Area/Territory/Year/Month",
+        "routers": ["/eda-market", "/eda-product", "/eda-sales", "/train-lightgbm", "/train-prophet"],
         "docs": "/docs",
+        "redoc": "/redoc",
         "timestamp": time.time(),
     }
 
