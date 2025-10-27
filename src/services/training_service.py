@@ -51,7 +51,7 @@ def _fetch_sales_aggregated_any(session, scope: str) -> pd.DataFrame:
         f"""
         SELECT {select_cols},
                TRY_CAST([YEAR] AS INT) AS [Year], TRY_CAST([MONTH] AS INT) AS [Month],
-               SUM(CAST(COALESCE([QT_PRS],0) AS FLOAT) * CAST(COALESCE([UNIT_PRICE],0) AS FLOAT)) AS SalesAmount
+               SUM(CAST(COALESCE([SALES_QTY],0) AS FLOAT) * CAST(COALESCE([UNIT_PRICE],0) AS FLOAT)) AS SalesAmount
         FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
         WHERE [YEAR] IS NOT NULL AND [MONTH] IS NOT NULL
         GROUP BY {group_cols_expr}, [YEAR], [MONTH]
@@ -68,7 +68,7 @@ def _fetch_sales_aggregated_any(session, scope: str) -> pd.DataFrame:
         f"""
         SELECT {select_cols},
                TRY_CAST([YEAR] AS INT) AS [Year], TRY_CAST([MONTH] AS INT) AS [Month],
-               SUM(CAST(COALESCE([QT_PRS],0) AS FLOAT)) AS SalesAmount
+               SUM(CAST(COALESCE([SALES_QTY],0) AS FLOAT)) AS SalesAmount
         FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
         WHERE [YEAR] IS NOT NULL AND [MONTH] IS NOT NULL
         GROUP BY {group_cols_expr}, [YEAR], [MONTH]

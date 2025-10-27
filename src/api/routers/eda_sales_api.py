@@ -61,8 +61,8 @@ async def eda_region_summary(request: Request, year: Optional[int] = Query(None)
             f"""
             SELECT
               [REGION_ID], [AREA_ID], [TERRITORY_ID],
-              SUM(CAST([QT_PRS] AS FLOAT)) AS total_qty,
-              SUM(CAST([QT_PRS] AS FLOAT) * CAST([UNIT_PRICE] AS FLOAT)) AS sales_amount
+              SUM(CAST([SALES_QTY] AS FLOAT)) AS total_qty,
+              SUM(CAST([SALES_QTY] AS FLOAT) * CAST([UNIT_PRICE] AS FLOAT)) AS sales_amount
             FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
             {where_clause}
             GROUP BY [REGION_ID], [AREA_ID], [TERRITORY_ID]
@@ -106,8 +106,8 @@ async def eda_monthly_trend(
             SELECT
               CAST([YEAR] AS INT) AS [year],
               CAST([MONTH] AS INT) AS [month],
-              SUM(CAST([QT_PRS] AS FLOAT)) AS total_qty,
-              SUM(CAST([QT_PRS] AS FLOAT) * CAST([UNIT_PRICE] AS FLOAT)) AS sales_amount
+              SUM(CAST([SALES_QTY] AS FLOAT)) AS total_qty,
+              SUM(CAST([SALES_QTY] AS FLOAT) * CAST([UNIT_PRICE] AS FLOAT)) AS sales_amount
             FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
             {where_clause}
             GROUP BY [YEAR], [MONTH]
@@ -155,8 +155,8 @@ async def eda_top_products(
             f"""
             SELECT TOP (:limit)
               [PRODUCT_ID],
-              SUM(CAST([QT_PRS] AS FLOAT)) AS total_qty,
-              SUM(CAST([QT_PRS] AS FLOAT) * CAST([UNIT_PRICE] AS FLOAT)) AS sales_amount
+              SUM(CAST([SALES_QTY] AS FLOAT)) AS total_qty,
+              SUM(CAST([SALES_QTY] AS FLOAT) * CAST([UNIT_PRICE] AS FLOAT)) AS sales_amount
             FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
             {where_clause}
             GROUP BY [PRODUCT_ID]
@@ -178,7 +178,7 @@ async def eda_sample(request: Request, limit: int = Query(50, ge=1, le=500)):
             """
             SELECT TOP (:limit)
               [ROW_DATA_ID], [SURVEY_CIRCLE_ID], [YEAR], [MONTH], [PRODUCT_ID],
-              [QT_PRS], [UNIT_PRICE], [TERRITORY_ID], [AREA_ID], [REGION_ID],
+              [SALES_QTY], [UNIT_PRICE], [TERRITORY_ID], [AREA_ID], [REGION_ID],
               [TERRITORY_ID], [AREA_ID], [REGION_ID], [PRS_ID]
             FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
             ORDER BY [ROW_DATA_ID] DESC
@@ -201,12 +201,12 @@ async def eda_summary_stats(request: Request):
             """
             SELECT 
               COUNT(*) AS row_count,
-              -- QT_PRS stats
-              SUM(CASE WHEN [QT_PRS] IS NULL THEN 1 ELSE 0 END) AS qt_nulls,
-              MIN(CAST([QT_PRS] AS FLOAT)) AS qt_min,
-              MAX(CAST([QT_PRS] AS FLOAT)) AS qt_max,
-              AVG(CAST([QT_PRS] AS FLOAT)) AS qt_mean,
-              STDEV(CAST([QT_PRS] AS FLOAT)) AS qt_std,
+              -- SALES_QTY stats
+              SUM(CASE WHEN [SALES_QTY] IS NULL THEN 1 ELSE 0 END) AS qt_nulls,
+              MIN(CAST([SALES_QTY] AS FLOAT)) AS qt_min,
+              MAX(CAST([SALES_QTY] AS FLOAT)) AS qt_max,
+              AVG(CAST([SALES_QTY] AS FLOAT)) AS qt_mean,
+              STDEV(CAST([SALES_QTY] AS FLOAT)) AS qt_std,
               -- UNIT_PRICE stats
               SUM(CASE WHEN [UNIT_PRICE] IS NULL THEN 1 ELSE 0 END) AS price_nulls,
               MIN(CAST([UNIT_PRICE] AS FLOAT)) AS price_min,
@@ -226,7 +226,7 @@ async def eda_summary_stats(request: Request):
                 text(
                     """
                     SELECT 
-                      SUM(CASE WHEN CAST([QT_PRS] AS FLOAT) < 0 THEN 1 ELSE 0 END) AS qt_neg_count,
+                      SUM(CASE WHEN CAST([SALES_QTY] AS FLOAT) < 0 THEN 1 ELSE 0 END) AS qt_neg_count,
                       SUM(CASE WHEN CAST([UNIT_PRICE] AS FLOAT) < 0 THEN 1 ELSE 0 END) AS price_neg_count
                     FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
                     """
@@ -340,7 +340,7 @@ async def eda_rolling_qty(
     window: int = Query(3, ge=2, le=12),
     region_id: Optional[str] = Query(None),
 ):
-    """Computes rolling average of total monthly quantity (QT_PRS) per REGION_ID using a window over the previous N months including current.
+    """Computes rolling average of total monthly quantity (SALES_QTY) per REGION_ID using a window over the previous N months including current.
     """
     SessionFactory = request.app.state.SessionFactory
     def _run():
@@ -356,7 +356,7 @@ async def eda_rolling_qty(
             WITH monthly AS (
               SELECT 
                 CAST([YEAR] AS INT) AS [year], CAST([MONTH] AS INT) AS [month],
-                [REGION_ID], SUM(CAST([QT_PRS] AS FLOAT)) AS total_qty
+                [REGION_ID], SUM(CAST([SALES_QTY] AS FLOAT)) AS total_qty
               FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
               {where_clause}
               GROUP BY [REGION_ID], [YEAR], [MONTH]
@@ -379,7 +379,7 @@ async def eda_rolling_qty(
     return await asyncio.to_thread(_run)
 
 
-# 2) Distribution snapshots (quantiles/IQR) for QT_PRS and UNIT_PRICE
+# 2) Distribution snapshots (quantiles/IQR) for SALES_QTY and UNIT_PRICE
 @router.get("/eda-sales/distribution")
 async def eda_distribution(request: Request):
     
@@ -416,7 +416,7 @@ async def eda_distribution(request: Request):
     def _run():
         with SessionFactory() as session:
             return {
-                "QT_PRS": _quantiles_for("QT_PRS", session),
+                "SALES_QTY": _quantiles_for("SALES_QTY", session),
                 "UNIT_PRICE": _quantiles_for("UNIT_PRICE", session),
             }
 
@@ -492,7 +492,7 @@ async def eda_time_coverage(request: Request):
     return await asyncio.to_thread(_run)
 
 
-# 5) Relationship: UNIT_PRICE vs QT_PRS (correlation and sample)
+# 5) Relationship: UNIT_PRICE vs SALES_QTY (correlation and sample)
 @router.get("/eda-sales/price-quantity-corr")
 async def eda_price_quantity_correlation(
     request: Request,
@@ -506,9 +506,9 @@ async def eda_price_quantity_correlation(
                     """
                     SELECT TOP (:sample)
                       CAST([UNIT_PRICE] AS FLOAT) AS unit_price,
-                      CAST([QT_PRS] AS FLOAT) AS qty
+                      CAST([SALES_QTY] AS FLOAT) AS qty
                     FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
-                    WHERE [UNIT_PRICE] IS NOT NULL AND [QT_PRS] IS NOT NULL
+                    WHERE [UNIT_PRICE] IS NOT NULL AND [SALES_QTY] IS NOT NULL
                     ORDER BY [ROW_DATA_ID] DESC
                     """
                 ),

@@ -47,52 +47,68 @@ async def forecast(req: ForecastRequest, request: Request):
 
 
 @router.post("/forecast-grid")
-async def forecast_grid_endpoint(req: ForecastGridRequest, request: Request):
-    config = request.app.state.config
-    SessionFactory = request.app.state.SessionFactory
-
-    def _run():
-        from src.services.forecast_grid_service import forecast_grid
-        with SessionFactory() as session:
-            return forecast_grid(
-                session=session, 
-                config=config, 
-                scope=req.scope, 
-                horizon=req.horizon, 
-                dimensions=req.dimensions
-                )
-
-    result = await asyncio.to_thread(_run)
-    return result
-
-
-@router.post("/forecast-views")
 async def forecast_views(req: ForecastViewsRequest, request: Request):
+    """
+        1) Yearly total sales (forecasted amount) --> "yearly_total": ["Year"],
+        2) Yearly selected product sales (requires Product dimension) --> "yearly_selected_product": ["Year", "Product"],
+        3) Yearly product-wise sales --> "yearly_product_wise": ["Year", "Product"],
+        4) Year/Month total sales --> "year_month_total": ["Year", "Month"],
+        5) Year/Month selected product sales --> "year_month_selected_product": ["Year", "Month", "Product"],
+        6) Year/Month and product-wise sales --> "year_month_product_wise": ["Year", "Month", "Product"],
+        7) Year/Month and Territory-wise total sales --> "year_month_territory_total": ["Year", "Month", "Territory"],
+        8) Year/Month and Territory-wise selected product sales --> "year_month_territory_selected_product": ["Year", "Month", "Territory", "Product"],
+        9) Year/Month and Area-wise total sales --> "year_month_area_total": ["Year", "Month", "Area"],
+        10) Year/Month and Area-wise selected product sales --> "year_month_area_selected_product": ["Year", "Month", "Area", "Product"]
+    """
     config = request.app.state.config
     SessionFactory = request.app.state.SessionFactory
 
     def _run():
         from src.services.forecast_grid_service import forecast_grid
         with SessionFactory() as session:
-            dims_union = set()
+            # Map the 10 requested conditions to explicit view names and dimensions
             view_map = {
-                "year": ["Year"],
-                "year_month": ["Year", "Month"],
-                "year_product": ["Year", "Product"],
-                "year_month_product": ["Year", "Month", "Product"],
-                "year_month_territory": ["Year", "Month", "Territory"],
-                "year_month_area": ["Year", "Month", "Area"],
-                "year_month_region": ["Year", "Month", "Region"],
-                "year_month_product_territory": ["Year", "Month", "Product", "Territory"],
-                "year_month_product_area": ["Year", "Month", "Product", "Area"],
-                "year_month_product_region": ["Year", "Month", "Product", "Region"],
+                # 1) Yearly total sales (forecasted amount)
+                "yearly_total": ["Year"],
+                # 2) Yearly selected product sales (requires Product dimension)
+                "yearly_selected_product": ["Year", "Product"],
+                # 3) Yearly product-wise sales
+                "yearly_product_wise": ["Year", "Product"],
+                # 4) Year/Month total sales
+                "year_month_total": ["Year", "Month"],
+                # 5) Year/Month selected product sales
+                "year_month_selected_product": ["Year", "Month", "Product"],
+                # 6) Year/Month and product-wise sales
+                "year_month_product_wise": ["Year", "Month", "Product"],
+                # 7) Year/Month and Territory-wise total sales
+                "year_month_territory_total": ["Year", "Month", "Territory"],
+                # 8) Year/Month and Territory-wise selected product sales
+                "year_month_territory_selected_product": ["Year", "Month", "Territory", "Product"],
+                # 9) Year/Month and Area-wise total sales
+                "year_month_area_total": ["Year", "Month", "Area"],
+                # 10) Year/Month and Area-wise selected product sales
+                "year_month_area_selected_product": ["Year", "Month", "Area", "Product"],
             }
-            for v in req.views:
+
+            # Determine all dimensions needed for requested views
+            req_names = req.views or list(view_map.keys())
+            dims_union = set()
+            for v in req_names:
                 dims_union.update(view_map.get(v, []))
             dims_req = list(dims_union) if dims_union else ["Year", "Month"]
-            fg = forecast_grid(session=session, config=config, scope=req.scope, horizon=req.horizon, dimensions=dims_req)
+
+            # Get forecast grid with required dimensions
+            fg = forecast_grid(
+                session=session,
+                config=config,
+                scope=req.scope,
+                horizon=req.horizon,
+                dimensions=dims_req,
+            )
             if fg.get("status") != "ok":
                 return fg
+
+            # Flatten results into a DataFrame
             rows: List[Dict[str, Any]] = []
             for item in fg.get("results", []):
                 key_dims = item.get("key_dims", [])
@@ -103,16 +119,31 @@ async def forecast_views(req: ForecastViewsRequest, request: Request):
                     rows.append(r)
             if not rows:
                 return {"status": "no_data", "message": "No forecast rows"}
+
             df = pd.DataFrame(rows)
-            out: Dict[str, Any] = {"status": "ok", "views": {}}
+
+            # Aggregation helper: sum forecasted amount columns
             def agg_for(dims: List[str]):
                 missing = [d for d in dims if d not in df.columns]
                 if missing:
                     return {"status": "unavailable", "missing_dims": missing}
-                grp = df.groupby(dims, dropna=False)[["yhat", "yhat_lower", "yhat_upper"]].sum().reset_index()
-                return {"status": "ok", "dimensions": dims, "data": grp.to_dict(orient="records")}
+                grp = (
+                    df.groupby(dims, dropna=False)[["yhat", "yhat_lower", "yhat_upper"]]
+                    .sum()
+                    .reset_index()
+                )
+                return {
+                    "status": "ok",
+                    "dimensions": dims,
+                    "data": grp.to_dict(orient="records"),
+                    "measure": "sales_amount",
+                    "note": "Quantity and unit price forecasts are not available; aggregated forecasted sales amount provided.",
+                }
+
+            # Build output views
+            out: Dict[str, Any] = {"status": "ok", "views": {}}
             for name, dims in view_map.items():
-                if not req.views or name in req.views:
+                if name in req_names:
                     out["views"][name] = agg_for(dims)
             return out
 
