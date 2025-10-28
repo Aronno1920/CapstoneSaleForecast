@@ -7,6 +7,8 @@ from src.database.queries import fetch_sales_aggregated
 from src.utils.preprocessing import prepare_time_series
 from src.models.prophet_model import ProphetWrapper
 from src.models.lightgbm_model import LightGBMWrapper
+from src.models.XGBoost_model import XGBoostWrapper
+from src.models.lstm_model import LSTMWrapper
 from src.utils.features import add_lag_features, add_time_features
 from sqlalchemy import text
 
@@ -50,12 +52,12 @@ def _fetch_sales_aggregated_any(session, scope: str) -> pd.DataFrame:
     sql_rev = text(
         f"""
         SELECT {select_cols},
-               TRY_CAST([YEAR] AS INT) AS [Year], TRY_CAST([MONTH] AS INT) AS [Month],
+               TRY_CAST([YEAR_NO] AS INT) AS [YEAR_NO], TRY_CAST([MONTH_NO] AS INT) AS [MONTH_NO],
                SUM(CAST(COALESCE([SALES_QTY],0) AS FLOAT) * CAST(COALESCE([UNIT_PRICE],0) AS FLOAT)) AS SalesAmount
         FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
-        WHERE [YEAR] IS NOT NULL AND [MONTH] IS NOT NULL
-        GROUP BY {group_cols_expr}, [YEAR], [MONTH]
-        ORDER BY {group_cols_expr}, [YEAR], [MONTH]
+        WHERE [YEAR_NO] IS NOT NULL AND [MONTH_NO] IS NOT NULL
+        GROUP BY {group_cols_expr}, [YEAR_NO], [MONTH_NO]
+        ORDER BY {group_cols_expr}, [YEAR_NO], [MONTH_NO]
         """
     )
     df_fb = _df_from_sql(session, sql_rev)
@@ -67,12 +69,12 @@ def _fetch_sales_aggregated_any(session, scope: str) -> pd.DataFrame:
     sql_qty = text(
         f"""
         SELECT {select_cols},
-               TRY_CAST([YEAR] AS INT) AS [Year], TRY_CAST([MONTH] AS INT) AS [Month],
+               TRY_CAST([YEAR_NO] AS INT) AS [YEAR_NO], TRY_CAST([MONTH_NO] AS INT) AS [MONTH_NO],
                SUM(CAST(COALESCE([SALES_QTY],0) AS FLOAT)) AS SalesAmount
         FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
-        WHERE [YEAR] IS NOT NULL AND [MONTH] IS NOT NULL
-        GROUP BY {group_cols_expr}, [YEAR], [MONTH]
-        ORDER BY {group_cols_expr}, [YEAR], [MONTH]
+        WHERE [YEAR_NO] IS NOT NULL AND [MONTH_NO] IS NOT NULL
+        GROUP BY {group_cols_expr}, [YEAR_NO], [MONTH_NO]
+        ORDER BY {group_cols_expr}, [YEAR_NO], [MONTH_NO]
         """
     )
     df_fb2 = _df_from_sql(session, sql_qty)
@@ -113,7 +115,7 @@ def train_prophet_pipeline(session, config: AppConfig, scope: str, seasonality_m
                 text(
                     """
                     SELECT COUNT(*) AS rows_all,
-                           SUM(CASE WHEN [YEAR] IS NOT NULL AND [MONTH] IS NOT NULL THEN 1 ELSE 0 END) AS rows_with_period
+                           SUM(CASE WHEN [YEAR_NO] IS NOT NULL AND [MONTH_NO] IS NOT NULL THEN 1 ELSE 0 END) AS rows_with_period
                     FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
                     """
                 ),
@@ -177,7 +179,7 @@ def train_lightgbm_pipeline(session, config: AppConfig, scope: str, horizon: int
                 text(
                     """
                     SELECT COUNT(*) AS rows_all,
-                           SUM(CASE WHEN [YEAR] IS NOT NULL AND [MONTH] IS NOT NULL THEN 1 ELSE 0 END) AS rows_with_period
+                           SUM(CASE WHEN [YEAR_NO] IS NOT NULL AND [MONTH_NO] IS NOT NULL THEN 1 ELSE 0 END) AS rows_with_period
                     FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
                     """
                 ),
@@ -226,3 +228,118 @@ def train_lightgbm_pipeline(session, config: AppConfig, scope: str, horizon: int
         return {"status": "ok", "trained": len(artifacts), "artifacts": artifacts}
     except Exception as e:
         return {"status": "error", "message": "train_lightgbm failed", "error": str(e)}
+
+
+def train_xgboost_pipeline(session, config: AppConfig, scope: str, horizon: int = 6) -> dict:
+    try:
+        df = _fetch_sales_aggregated_any(session, scope=scope)
+        if df.empty:
+            diag = _df_from_sql(
+                session,
+                text(
+                    """
+                    SELECT COUNT(*) AS rows_all,
+                           SUM(CASE WHEN [YEAR_NO] IS NOT NULL AND [MONTH_NO] IS NOT NULL THEN 1 ELSE 0 END) AS rows_with_period
+                    FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
+                    """
+                ),
+            )
+            info = diag.iloc[0].to_dict() if not diag.empty else {}
+            return {"status": "no_data", "message": "No sales data available from DB", "scope": scope, "debug": info}
+
+        df = _sanitize_year_month(df)
+        if df.empty:
+            return {"status": "no_data", "message": "No usable Year/Month after sanitization", "scope": scope}
+
+        ts = prepare_time_series(df, scope=scope)
+
+        keys = {
+            "territory": ["Region", "Area", "Territory"],
+            "area": ["Region", "Area"],
+            "region": ["Region"],
+        }[scope]
+
+        artifacts: List[str] = []
+        for key_vals, grp in ts.groupby(keys):
+            g = grp.sort_values("ds").copy()
+            g = add_lag_features(g, lags=(1, 2, 3, 6, 12))
+            g = add_time_features(g)
+            g = g.dropna()
+            if g.empty:
+                continue
+            feature_cols = [c for c in g.columns if c not in set(keys + ["ds", "y"])]
+            if not feature_cols:
+                continue
+            X = g[feature_cols]
+            y = g["y"]
+
+            model = XGBoostWrapper()
+            model.fit(X, y)
+
+            key_dir = Path(config.artifacts_dir) / scope / "xgboost" / "__".join(
+                map(str, key_vals if isinstance(key_vals, tuple) else (key_vals,))
+            )
+            key_dir.mkdir(parents=True, exist_ok=True)
+            model_path = key_dir / "model.json"
+            model.save(model_path)
+            artifacts.append(str(model_path))
+
+        return {"status": "ok", "trained": len(artifacts), "artifacts": artifacts}
+    except Exception as e:
+        return {"status": "error", "message": "train_xgboost failed", "error": str(e)}
+
+
+def train_lstm_pipeline(session, config: AppConfig, scope: str, window: int = 12, epochs: int = 50, batch_size: int = 32) -> dict:
+    """Train LSTM models per key group on univariate series y.
+
+    Saves one model per key under artifacts/<scope>/lstm/<key>/model.keras
+    """
+    try:
+        df = _fetch_sales_aggregated_any(session, scope=scope)
+        if df.empty:
+            diag = _df_from_sql(
+                session,
+                text(
+                    """
+                    SELECT COUNT(*) AS rows_all,
+                           SUM(CASE WHEN [YEAR_NO] IS NOT NULL AND [MONTH_NO] IS NOT NULL THEN 1 ELSE 0 END) AS rows_with_period
+                    FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
+                    """
+                ),
+            )
+            info = diag.iloc[0].to_dict() if not diag.empty else {}
+            return {"status": "no_data", "message": "No sales data available from DB", "scope": scope, "debug": info}
+
+        df = _sanitize_year_month(df)
+        if df.empty:
+            return {"status": "no_data", "message": "No usable Year/Month after sanitization", "scope": scope}
+
+        ts = prepare_time_series(df, scope=scope)
+
+        keys = {
+            "territory": ["Region", "Area", "Territory"],
+            "area": ["Region", "Area"],
+            "region": ["Region"],
+        }[scope]
+
+        artifacts: List[str] = []
+        for key_vals, grp in ts.groupby(keys):
+            g = grp.sort_values("ds").dropna(subset=["y"]).copy()
+            if len(g) <= window:
+                continue
+            y = g["y"]
+
+            model = LSTMWrapper(window=window)
+            model.fit(y=y, epochs=epochs, batch_size=batch_size)
+
+            key_dir = Path(config.artifacts_dir) / scope / "lstm" / "__".join(
+                map(str, key_vals if isinstance(key_vals, tuple) else (key_vals,))
+            )
+            key_dir.mkdir(parents=True, exist_ok=True)
+            model_path = key_dir / "model.pt"
+            model.save(model_path)
+            artifacts.append(str(model_path))
+
+        return {"status": "ok", "trained": len(artifacts), "artifacts": artifacts}
+    except Exception as e:
+        return {"status": "error", "message": "train_lstm failed", "error": str(e)}

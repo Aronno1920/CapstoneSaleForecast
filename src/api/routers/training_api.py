@@ -2,7 +2,7 @@ import asyncio
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
-from src.services.training_service import train_lightgbm_pipeline, train_prophet_pipeline
+from src.services.training_service import train_lightgbm_pipeline, train_prophet_pipeline, train_xgboost_pipeline, train_lstm_pipeline
 
 router = APIRouter(
     tags=["Model Train"],
@@ -34,6 +34,19 @@ async def train_lightgbm(req: TrainRequest, request: Request):
     return result
 
 
+@router.post("/train-xgboost")
+async def train_xgboost(req: TrainRequest, request: Request):
+    config = request.app.state.config
+    SessionFactory = request.app.state.SessionFactory
+
+    def _run():
+        with SessionFactory() as session:
+            return train_xgboost_pipeline(session=session, config=config, scope=req.scope, horizon=req.horizon)
+
+    result = await asyncio.to_thread(_run)
+    return result
+
+
 @router.post("/train-prophet")
 async def train_prophet(req: ProphetTrainRequest, request: Request):
     config = request.app.state.config
@@ -46,6 +59,23 @@ async def train_prophet(req: ProphetTrainRequest, request: Request):
                 config=config,
                 scope=req.scope,
                 seasonality_mode=req.seasonality_mode,
+            )
+
+    result = await asyncio.to_thread(_run)
+    return result
+
+
+@router.post("/train-lstm")
+async def train_lstm(req: TrainRequest, request: Request):
+    config = request.app.state.config
+    SessionFactory = request.app.state.SessionFactory
+
+    def _run():
+        with SessionFactory() as session:
+            return train_lstm_pipeline(
+                session=session,
+                config=config,
+                scope=req.scope,
             )
 
     result = await asyncio.to_thread(_run)

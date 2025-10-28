@@ -46,6 +46,46 @@ async def forecast(req: ForecastRequest, request: Request):
     return result
 
 
+@router.post("/forecast-lstm")
+async def forecast_lstm(req: ForecastRequest, request: Request):
+    config = request.app.state.config
+    SessionFactory = request.app.state.SessionFactory
+
+    def _run():
+        from src.services.forecast_service import forecast_lstm_pipeline
+        with SessionFactory() as session:
+            return forecast_lstm_pipeline(
+                session=session,
+                config=config,
+                scope=req.scope,
+                horizon=req.horizon,
+                filters=req.filters or {},
+            )
+
+    result = await asyncio.to_thread(_run)
+    return result
+
+
+@router.post("/forecast-xgboost")
+async def forecast_xgboost(req: ForecastRequest, request: Request):
+    config = request.app.state.config
+    SessionFactory = request.app.state.SessionFactory
+
+    def _run():
+        from src.services.forecast_service import forecast_xgboost_pipeline
+        with SessionFactory() as session:
+            return forecast_xgboost_pipeline(
+                session=session,
+                config=config,
+                scope=req.scope,
+                horizon=req.horizon,
+                filters=req.filters or {},
+            )
+
+    result = await asyncio.to_thread(_run)
+    return result
+
+
 @router.post("/forecast-grid")
 async def forecast_views(req: ForecastViewsRequest, request: Request):
     """

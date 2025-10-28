@@ -26,8 +26,8 @@ async def eda_summary(request: Request):
             """
             SELECT
               COUNT(*) AS row_count,
-              MIN([YEAR]) AS min_year,
-              MAX([YEAR]) AS max_year,
+              MIN([YEAR_NO]) AS min_year,
+              MAX([YEAR_NO]) AS max_year,
               COUNT(DISTINCT [PRODUCT_ID]) AS product_count,
               COUNT(DISTINCT [REGION_ID]) AS region_count,
               COUNT(DISTINCT [AREA_ID]) AS area_count,
@@ -51,10 +51,10 @@ async def eda_region_summary(request: Request, year: Optional[int] = Query(None)
         conditions = []
         params: Dict[str, Any] = {}
         if year is not None:
-            conditions.append("[YEAR] = :year")
+            conditions.append("[YEAR_NO] = :year")
             params["year"] = year
         if month is not None:
-            conditions.append("[MONTH] = :month")
+            conditions.append("[MONTH_NO] = :month")
             params["month"] = month
         where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         sql = text(
@@ -104,14 +104,14 @@ async def eda_monthly_trend(
         sql = text(
             f"""
             SELECT
-              CAST([YEAR] AS INT) AS [year],
-              CAST([MONTH] AS INT) AS [month],
+              CAST([YEAR_NO] AS INT) AS [YEAR_NO],
+              CAST([MONTH_NO] AS INT) AS [MONTH_NO],
               SUM(CAST([SALES_QTY] AS FLOAT)) AS total_qty,
               SUM(CAST([SALES_QTY] AS FLOAT) * CAST([UNIT_PRICE] AS FLOAT)) AS sales_amount
             FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
             {where_clause}
-            GROUP BY [YEAR], [MONTH]
-            ORDER BY [YEAR], [MONTH]
+            GROUP BY [YEAR_NO], [MONTH_NO]
+            ORDER BY [YEAR_NO], [MONTH_NO]
             """
         )
         with SessionFactory() as session:
@@ -136,10 +136,10 @@ async def eda_top_products(
         conditions = []
         params: Dict[str, Any] = {"limit": limit}
         if year is not None:
-            conditions.append("[YEAR] = :year")
+            conditions.append("[YEAR_NO] = :year")
             params["year"] = year
         if month is not None:
-            conditions.append("[MONTH] = :month")
+            conditions.append("[MONTH_NO] = :month")
             params["month"] = month
         if region_id:
             conditions.append("[REGION_ID] = :region_id")
@@ -177,7 +177,7 @@ async def eda_sample(request: Request, limit: int = Query(50, ge=1, le=500)):
         sql = text(
             """
             SELECT TOP (:limit)
-              [ROW_DATA_ID], [SURVEY_CIRCLE_ID], [YEAR], [MONTH], [PRODUCT_ID],
+              [ROW_DATA_ID], [SURVEY_CIRCLE_ID], [YEAR_NO], [MONTH_NO], [PRODUCT_ID],
               [SALES_QTY], [UNIT_PRICE], [TERRITORY_ID], [AREA_ID], [REGION_ID],
               [TERRITORY_ID], [AREA_ID], [REGION_ID], [PRS_ID]
             FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
@@ -254,12 +254,12 @@ async def eda_time_features(
         sql = text(
             """
             SELECT TOP (:sample)
-              CAST([YEAR] AS INT) AS [year],
-              CAST([MONTH] AS INT) AS [month],
-              ((CAST([MONTH] AS INT) + 2) / 3) AS quarter
+              CAST([YEAR_NO] AS INT) AS [YEAR_NO],
+              CAST([MONTH_NO] AS INT) AS [MONTH_NO],
+              ((CAST([MONTH_NO] AS INT) + 2) / 3) AS quarter
             FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
-            WHERE [YEAR] IS NOT NULL AND [MONTH] IS NOT NULL
-            ORDER BY [YEAR] DESC, [MONTH] DESC
+            WHERE [YEAR_NO] IS NOT NULL AND [MONTH_NO] IS NOT NULL
+            ORDER BY [YEAR_NO] DESC, [MONTH_NO] DESC
             """
         )
         with SessionFactory() as session:
@@ -289,10 +289,10 @@ async def eda_price_change_mom(
             conditions.append("s.[PRODUCT_ID] = :product_id")
             params["product_id"] = product_id
         if start_year is not None:
-            conditions.append("CAST(s.[YEAR] AS INT) >= :start_year")
+            conditions.append("CAST(s.[YEAR_NO] AS INT) >= :start_year")
             params["start_year"] = int(start_year)
         if end_year is not None:
-            conditions.append("CAST(s.[YEAR] AS INT) <= :end_year")
+            conditions.append("CAST(s.[YEAR_NO] AS INT) <= :end_year")
             params["end_year"] = int(end_year)
         where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
@@ -300,11 +300,11 @@ async def eda_price_change_mom(
             f"""
             WITH monthly AS (
               SELECT 
-                s.[PRODUCT_ID], CAST(s.[YEAR] AS INT) AS [year], CAST(s.[MONTH] AS INT) AS [month],
+                s.[PRODUCT_ID], CAST(s.[YEAR_NO] AS INT) AS [YEAR_NO], CAST(s.[MONTH_NO] AS INT) AS [MONTH_NO],
                 AVG(CAST(s.[UNIT_PRICE] AS FLOAT)) AS monthly_price
               FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY] s
               {where_clause}
-              GROUP BY s.[PRODUCT_ID], s.[YEAR], s.[MONTH]
+              GROUP BY s.[PRODUCT_ID], s.[YEAR_NO], s.[MONTH_NO]
             ),
             top_prod AS (
               SELECT TOP (:limit_products) [PRODUCT_ID]
@@ -314,16 +314,16 @@ async def eda_price_change_mom(
             ),
             priced AS (
               SELECT m.*,
-                LAG(m.monthly_price) OVER (PARTITION BY m.[PRODUCT_ID] ORDER BY m.[year], m.[month]) AS prev_price
+                LAG(m.monthly_price) OVER (PARTITION BY m.[PRODUCT_ID] ORDER BY m.[YEAR_NO], m.[MONTH_NO]) AS prev_price
               FROM monthly m
               JOIN top_prod t ON m.[PRODUCT_ID] = t.[PRODUCT_ID]
             )
             SELECT 
-              [PRODUCT_ID], [year], [month], monthly_price,
+              [PRODUCT_ID], [YEAR_NO], [MONTH_NO], monthly_price,
               CASE WHEN prev_price IS NULL OR prev_price = 0 THEN NULL
                    ELSE ((monthly_price - prev_price) / prev_price) * 100.0 END AS pct_change
             FROM priced
-            ORDER BY [PRODUCT_ID], [year], [month]
+            ORDER BY [PRODUCT_ID], [YEAR_NO], [MONTH_NO]
             """
         )
         with SessionFactory() as session:
@@ -355,21 +355,21 @@ async def eda_rolling_qty(
             f"""
             WITH monthly AS (
               SELECT 
-                CAST([YEAR] AS INT) AS [year], CAST([MONTH] AS INT) AS [month],
+                CAST([YEAR_NO] AS INT) AS [YEAR_NO], CAST([MONTH_NO] AS INT) AS [MONTH_NO],
                 [REGION_ID], SUM(CAST([SALES_QTY] AS FLOAT)) AS total_qty
               FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
               {where_clause}
-              GROUP BY [REGION_ID], [YEAR], [MONTH]
+              GROUP BY [REGION_ID], [YEAR_NO], [MONTH_NO]
             )
             SELECT 
-              [REGION_ID], [year], [month], total_qty,
+              [REGION_ID], [YEAR_NO], [MONTH_NO], total_qty,
               AVG(total_qty) OVER (
                 PARTITION BY [REGION_ID] 
-                ORDER BY [year], [month]
+                ORDER BY [YEAR_NO], [MONTH_NO]
                 ROWS BETWEEN (:window - 1) PRECEDING AND CURRENT ROW
               ) AS rolling_avg_qty
             FROM monthly
-            ORDER BY [REGION_ID], [year], [month]
+            ORDER BY [REGION_ID], [YEAR_NO], [MONTH_NO]
             """
         )
         with SessionFactory() as session:
@@ -466,10 +466,10 @@ async def eda_time_coverage(request: Request):
                 session.execute(
                     text(
                         """
-                        SELECT CAST([YEAR] AS INT) AS [year], COUNT(*) AS cnt
+                        SELECT CAST([YEAR_NO] AS INT) AS [YEAR_NO], COUNT(*) AS cnt
                         FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
-                        GROUP BY [YEAR]
-                        ORDER BY [year]
+                        GROUP BY [YEAR_NO]
+                        ORDER BY [YEAR_NO]
                         """
                     )
                 ).all()
@@ -479,10 +479,10 @@ async def eda_time_coverage(request: Request):
                 session.execute(
                     text(
                         """
-                        SELECT CAST([MONTH] AS INT) AS [month], COUNT(*) AS cnt
+                        SELECT CAST([MONTH_NO] AS INT) AS [MONTH_NO], COUNT(*) AS cnt
                         FROM [MIS_OLL].[dbo].[MIS_PARTY_SURVEY]
-                        GROUP BY [MONTH]
-                        ORDER BY [month]
+                        GROUP BY [MONTH_NO]
+                        ORDER BY [MONTH_NO]
                         """
                     )
                 ).all()

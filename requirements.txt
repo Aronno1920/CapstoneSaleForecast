@@ -10,3 +10,7 @@ lightgbm>=4.0.0
 xgboost>=1.7.6
 joblib>=1.3.0
 uvicorn[standard]>=0.30.0
+torch>=2.4.0
+plotly>=5.22.0
+# Optional, for static image export of plotly figures
+kaleido>=0.2.1

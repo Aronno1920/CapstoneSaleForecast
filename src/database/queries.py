@@ -15,11 +15,11 @@ def fetch_sales_aggregated(session, scope: str = "territory") -> pd.DataFrame:
     }[scope]
 
     sql = f"""
-    SELECT {group_cols}, CAST([Year] as int) as [Year], CAST([Month] as int) as [Month],
+    SELECT {group_cols}, CAST([YEAR_NO] as int) as [YEAR_NO], CAST([MONTH_NO] as int) as [MONTH_NO],
            SUM(SalesAmount) as SalesAmount
     FROM SalesHistory
-    GROUP BY {group_cols}, [Year], [Month]
-    ORDER BY {group_cols}, [Year], [Month]
+    GROUP BY {group_cols}, [YEAR_NO], [MONTH_NO]
+    ORDER BY {group_cols}, [YEAR_NO], [MONTH_NO]
     """
     try:
         df = pd.read_sql(text(sql), session.bind)
